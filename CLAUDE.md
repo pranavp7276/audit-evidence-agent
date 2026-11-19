@@ -48,4 +48,6 @@ Scored on hidden requests: gap recall >= 95%, false gaps < 5%, zero claims witho
 - Quality-scorecard "fatal" items (recording disclaimer, false information, disposition mismatch, threats) map to the top of the request's severity scale unless the scale says otherwise. Soft-skill scoring (greeting, negotiation, dead air) is not audit compliance.
 - Keep borrower detail in pack outputs to what the request needs: account reference, dates, record ids. No names or full phone numbers unless the request asks.
 - The agent's own loop and roles: docs/workflow.md.
+- An agency's own answer (a status, a remark, "NA") is a claim, not evidence. Test it against the data before accepting it; "NA" is testable too. Letters say Compliant, Gap or Cannot determine, never a bare Yes or No.
+- Message templates: the consent check reads each template's purpose from the template registry (which keeps one version per template, so "approved at send time" cannot be tested yet). Candidate checks from the lender sheets that are not built: collector active on the call date, calls only from registered numbers.
 

@@ -16,7 +16,7 @@ const SAMPLE_CIRCULAR = `1. Calling hours: collection calls to borrowers may be 
 
 export async function kbPage() {
   const docs = await api("/api/kb");
-  app.innerHTML = `${rulebookNav("#/kb")}<h1>Knowledge base ${help("guardrails")}</h1>
+  app.innerHTML = `${rulebookNav("#/kb")}<h1>Compliance library ${help("guardrails")}</h1>
     <p class="muted">The circulars, policies and SOPs that guardrails come from. Upload one, split it into clauses, and turn each testable obligation into a guardrail linked to its clause.</p>
     <div class="card"><h2>Documents</h2>
       ${docs.length ? `<table><thead><tr><th>Document</th><th>Type</th><th>Reference</th><th>Effective</th><th class="num">Clauses</th><th class="num">Guardrails</th></tr></thead><tbody>
@@ -49,7 +49,7 @@ export async function kbDocPage(id) {
   const d = await api(`/api/kb/${id}`);
   const byClause = {};
   d.guardrails.forEach((g) => (byClause[g.source_clause] ||= []).push(g));
-  app.innerHTML = `<p class="small"><a href="#/kb">&larr; Knowledge base</a></p>
+  app.innerHTML = `<p class="small"><a href="#/kb">&larr; Compliance library</a></p>
     <div class="row between"><div><h1>${esc(d.doc.title)}</h1><div class="muted small">${esc(d.doc.doc_type)}${d.doc.issuer ? ` · ${esc(d.doc.issuer)}` : ""}${d.doc.reference_no ? ` · ${esc(d.doc.reference_no)}` : ""}${d.doc.effective_date ? ` · effective ${fdate(d.doc.effective_date)}` : ""} · added by ${esc(d.doc.uploaded_by)}</div></div>
       <div class="row"><button class="primary" id="sg">Suggest guardrails from the clauses</button><a class="btn" href="#/guardrails">Open guardrails</a></div></div>
     <p id="sgmsg" class="small muted"></p>

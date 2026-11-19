@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from agent.web.common import STATIC
-from agent.web.routers import accounts, agent, dashboard, intake, knowledge, letter, pack, records, reference, runs
+from agent.web.routers import accounts, agent, dashboard, intake, knowledge, letter, pack, records, reference, registers, runs
 
 app = FastAPI(title="Audit evidence platform")
 app.router.on_startup.append(dashboard.warm)
@@ -47,6 +47,7 @@ app.include_router(knowledge.router)
 app.include_router(records.router)
 app.include_router(agent.router)
 app.include_router(dashboard.router)
+app.include_router(registers.router)
 
 
 @app.get("/")

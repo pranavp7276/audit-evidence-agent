@@ -94,4 +94,4 @@ export const subnav = (items, activeHref, label = "") =>
   `<nav class="subnav no-print" aria-label="${esc(label)}">${label ? `<span class="subnav-label">${esc(label)}</span>` : ""}${items.map(([href, text, n]) => `<a href="${href}" class="${href === activeHref ? "active" : ""}">${esc(text)}${n ? ` <span class="tag">${num(n)}</span>` : ""}</a>`).join("")}</nav>`;
 
 /* The three pages that together say what an audit is tested against. */
-export const rulebookNav = (active) => subnav([["#/kb", "1. Knowledge base"], ["#/guardrails", "2. Guardrails"], ["#/rules", "3. Rules & data"]], active, "Rulebook");
+export const rulebookNav = (active) => subnav([["#/guardrails", "1. Guardrails"], ["#/kb", "2. Compliance library"], ["#/rules", "3. Rules & data"]], active, "Forms and rules");

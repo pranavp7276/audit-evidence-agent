@@ -46,20 +46,22 @@ The agent's roles and limits are in `docs/workflow.md`.
 
 ## The screens
 
-The sidebar has three groups, matching what a person is doing:
+The menu follows the modules of an audit-management product; the mapping, and what each module does here, is in `docs/modules.md`.
 
-- **Audit work**: Dashboard (every audit at a glance and what needs attention first), Audit requests, New audit request.
-- **Rulebook**, read in order: 1. Knowledge base, 2. Guardrails, 3. Rules & data. Together they say what an audit is tested against. There is one copy of the rules, shared by every audit.
+- **Overview**: Dashboard, Alerts.
+- **Plan and conduct**: Audit plan, Audits, New audit request.
+- **Findings and follow-up**: Exceptions, Issues, Risk, Reports.
+- **Forms and rules**: Guardrails, Compliance library, Rules & data. There is one copy of the rules, shared by every audit.
 - **Help**: Guide; the Data explorer (advanced) sits at the bottom.
 
-An open audit has five stages, left to right, with the pages inside each stage shown as a second row:
+An open audit shows its workflow (request read, tested, gaps reviewed, letter approved) and has five stages, left to right, with the pages inside each stage shown as a second row:
 
 | Stage | Pages |
 |---|---|
-| Overview | Summary: where the audit stands and what to do next |
+| Overview | Summary: acceptance criteria, traps caught, what to do next |
 | Findings | By question · Gap register · Follow-up |
-| Accounts | All accounts, then one account's file |
-| Respond | Response letter · Evidence pack |
+| Accounts | All accounts, then one account's file with its evidence map |
+| Respond | Response letter · Evidence pack · Lender brief |
 | Agent | Activity · Ask the audit |
 
 Old links such as `#/run/<id>/gaps` still work; each page belongs to exactly one stage.

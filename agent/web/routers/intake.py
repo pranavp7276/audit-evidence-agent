@@ -13,7 +13,7 @@ from agent.core.contracts import CheckSpec, CheckType
 from agent.core.contracts import Request as AuditRequest
 from agent.intake.request_parser import _SOURCES, parse_checks_with_info, parse_sample, read_request
 from agent.intake.sampling import MAX_SAMPLE, contacted_accounts, resolve_references
-from agent.services import store
+from agent.services import plan, store
 from agent.services.audit import process
 from agent.web.common import _RUN_LOCK, ROOT
 
@@ -82,7 +82,7 @@ async def create_run(request_id: str = Form(...), text: str = Form(""), source: 
                      response_due: str = Form(""), created_by: str = Form(""), accounts: str = Form(""),
                      random_n: int | None = Form(None), checks: str = Form(""), scale: str = Form(""),
                      period_start: str = Form(""), period_end: str = Form(""), period_label: str = Form(""),
-                     sample_size: int | None = Form(None), file: UploadFile | None = File(None)) -> dict:
+                     sample_size: int | None = Form(None), plan_id: int | None = Form(None), file: UploadFile | None = File(None)) -> dict:
     request_id = request_id.strip()
     if not request_id:
         raise HTTPException(400, "Give the request an id, e.g. CO-04.")
@@ -107,6 +107,8 @@ async def create_run(request_id: str = Form(...), text: str = Form(""), source: 
             raise HTTPException(400, "The period needs a start date before its end date (the end day is not included).")
         period = {"start": period_start, "end": period_end, "label": period_label.strip() or f"{period_start} to {period_end}"}
     run_id = store.start_run(request, lender=lender.strip(), response_due=response_due.strip(), created_by=created_by.strip())
+    if plan_id:  # the audit was started from the audit plan: link it, and schedule the next one if the entry recurs
+        plan.link_run(plan_id, run_id)
 
     def work() -> None:
         with _RUN_LOCK:

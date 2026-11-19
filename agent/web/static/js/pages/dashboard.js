@@ -39,7 +39,7 @@ export async function dashboardPage() {
   const { runs, totals: t, severity, by_check: byCheck, months, agencies, agent, recent, attention, traps } = d;
   const maxM = Math.max(1, ...months.map((m) => +m.gaps));
   const sevColor = (i) => ["var(--gap)", "#c2570c", "var(--info)"][Math.min(i, 2)];
-  const latest = recent.find((r) => r.status === "completed");
+  const latest = d.latest_run;
   app.innerHTML = `
     <div class="row between"><div><h1>Dashboard ${help("audit")}</h1>
       <p class="muted" style="max-width:70ch">Answer any audit request with a complete evidence pack within a day, and report every gap before the auditor finds it.</p></div>

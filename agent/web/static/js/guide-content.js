@@ -11,9 +11,11 @@ export const GUIDE = [
       <tr><td><strong>Team member</strong></td><td>Maintains the data in the database, the guardrails and the knowledge base, and the code. See <a href="#/guide/data">Working with the data</a> and <a href="#/guide/team">Team setup</a>.</td></tr></tbody></table>
     <h2>The menu</h2>
     <ul>
-      <li><strong>Audit work</strong>: the <em>Dashboard</em> shows how every audit stands and what needs attention first; <em>Audit requests</em> lists every audit with its status and review progress; <em>New audit request</em> starts one.</li>
-      <li><strong>Rulebook</strong>, read in order: <em>1. Knowledge base</em> (the circulars and policies), <em>2. Guardrails</em> (what is tested, how serious a failure is, review priority), <em>3. Rules &amp; data</em> (the limits in force, what each check tests, the assumptions, the data read).</li>
-      <li><strong>Help</strong>: this guide. <strong>Data explorer</strong> (bottom left) is a read-only SQL box for analysts.</li>
+      <li><strong>Overview</strong>: the <em>Dashboard</em> shows how every audit stands against the acceptance criteria and what needs attention first; <em>Alerts</em> lists what needs a person (the count shows beside it).</li>
+      <li><strong>Plan and conduct</strong>: the <em>Audit plan</em> holds the audits you expect, by month; <em>Audits</em> lists each audit with its status; <em>New audit request</em> starts one.</li>
+      <li><strong>Findings and follow-up</strong>: <em>Exceptions</em> is every gap and open question across audits; select gaps there to raise an <em>Issue</em>, which tracks a gap to closure with an owner and a due date; <em>Risk</em> shows where gaps are most likely and most serious; <em>Reports</em> gathers what you can hand over.</li>
+      <li><strong>Forms and rules</strong>: <em>Guardrails</em> (what is tested, how serious a failure is, review priority), <em>Compliance library</em> (the circulars and policies they come from) and <em>Rules &amp; data</em> (the limits in force and the data read).</li>
+      <li><strong>Help</strong>: this guide. The <em>Data explorer</em> (bottom left) is a read-only SQL box for analysts.</li>
     </ul>
     <h2>Inside an audit</h2>
     <p>An open audit has five tabs that follow the work, left to right: <strong>Overview</strong> (where you are and what is next), <strong>Findings</strong> (by question, the gap register, the follow-up list), <strong>Accounts</strong> (everything tested for one account), <strong>Respond</strong> (the letter, then the evidence pack) and <strong>Agent</strong> (what the agent did, and questions about the results).</p>

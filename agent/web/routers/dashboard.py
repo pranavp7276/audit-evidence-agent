@@ -79,6 +79,9 @@ def _dashboard() -> dict:
         {ch}
         WHERE r.kind = 'audit' GROUP BY r.run_id ORDER BY r.started_at DESC LIMIT 12""".format(ch=_LATEST_CHALLENGE))
 
+    # the audit the headline figures describe: the latest one scored against an answer key, else the latest completed
+    scored = _one("SELECT s.run_id FROM audit.run_scores s JOIN audit.runs r USING (run_id) WHERE r.kind = 'audit' AND r.status = 'completed' ORDER BY s.score_id DESC LIMIT 1")
+    focus = next((r for r in recent if scored and r["run_id"] == scored["run_id"]), None) or next((r for r in recent if r["status"] == "completed"), None)
     today, attention = date.today(), []
     for r in recent:
         link = f"#/run/{r['run_id']}"
@@ -104,8 +107,8 @@ def _dashboard() -> dict:
     attention.sort(key=lambda a: order[a["level"]])
     return {"runs": runs, "totals": totals, "letters": letters, "severity": severity, "by_check": by_check, "months": months, "agencies": agencies,
             "agent": agent, "recent": recent, "attention": attention[:12], "sla_seconds": SLA_SECONDS,
-            "traps": trap_counts(), "acceptance": acceptance(recent[0]["run_id"]) if recent and recent[0]["status"] == "completed" else None,
-            "latest_run": {"run_id": str(recent[0]["run_id"]), "request_id": recent[0]["request_id"]} if recent else None,
+            "traps": trap_counts(), "acceptance": acceptance(focus["run_id"]) if focus else None,
+            "latest_run": {"run_id": str(focus["run_id"]), "request_id": focus["request_id"], "seconds": focus["seconds"], "accounts": focus["accounts"], "checks": focus["checks"]} if focus else None,
             "forecast": readiness.forecast(), "readiness": _readiness_state()}
 
 

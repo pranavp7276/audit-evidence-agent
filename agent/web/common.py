@@ -1,6 +1,8 @@
 """Shared by the routers: paths and constants, the read connection and the run lookups."""
 
+import functools
 import threading
+import time
 from pathlib import Path
 from uuid import UUID
 
@@ -78,3 +80,17 @@ def _completed(run_id: UUID) -> dict:
         raise HTTPException(409, f"The audit is {run['status']}; this is available once it has completed.")
     return run
 
+
+
+def cached(seconds: int):
+    """Keep a read-only endpoint's answer for a while: these figures change at the pace of an audit, and they are slow to build."""
+    def deco(fn):
+        box: dict = {"at": 0.0, "value": None}
+
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            if box["value"] is None or time.monotonic() - box["at"] > seconds:
+                box["value"], box["at"] = fn(*args, **kwargs), time.monotonic()
+            return box["value"]
+        return wrapper
+    return deco

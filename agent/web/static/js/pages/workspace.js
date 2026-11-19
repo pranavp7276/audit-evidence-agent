@@ -18,6 +18,13 @@ const STAGES = [
 ];
 const stageOf = (tab) => (tab === "account" ? "accounts" : (STAGES.find((s) => s.pages.some(([r]) => r === tab)) || STAGES[0]).key);
 
+const FLOW = [["Request read", () => true], ["Tested", (d) => d.run.status === "completed"], ["Gaps reviewed", (d) => reviewed(d)], ["Letter approved", (d) => !!d.letter && d.letter.status === "approved"]];
+const reviewed = (d) => d.run.status === "completed" && d.review.filter((r) => r.status === "gap" && r.disposition === "open").reduce((n, r) => n + +r.n, 0) === 0;
+function flow(d) {
+  const done = FLOW.map(([, ok]) => ok(d)), at = done.indexOf(false);
+  return `<ol class="flow no-print">${FLOW.map(([name], i) => `<li class="${done[i] ? "done" : i === at ? "now" : ""}"><span>${done[i] ? "&#10003;" : i + 1}</span>${name}</li>`).join("")}</ol>`;
+}
+
 export async function workspace(runId, tab, sub, q) {
   const d = await api(`/api/runs/${runId}`);
   const { run } = d, scale = run.severity_scale || [];
@@ -30,6 +37,7 @@ export async function workspace(runId, tab, sub, q) {
     <p class="small no-print"><a href="#/audits">&larr; All audit requests</a></p>
     <div class="row between"><div><h1>${esc(run.request_id)} ${badge(run.status)}</h1>
       <div class="muted small">${run.lender ? `Requested by <strong>${esc(run.lender)}</strong> · ` : ""}${run.response_due ? `response due ${fdate(run.response_due)} · ` : ""}started ${when(run.started_at)}${run.finished_at ? ` · tested in ${duration(run.started_at, run.finished_at)} (target: under ${slaMin / 60} hours)` : ""}${run.created_by ? ` · by ${esc(run.created_by)}` : ""}</div></div></div>
+    ${flow(d)}
     ${run.status === "failed" ? `<div class="err"><strong>The audit could not be completed.</strong> ${esc(run.notes || "")}</div>` : ""}
     ${run.status === "running" ? `<div class="card"><strong>Testing evidence…</strong> <span class="muted small">${d.tested_checks} of ${d.checks.length || "?"} checks done</span><div class="progress"><span style="width:${d.checks.length ? (d.tested_checks / d.checks.length) * 100 : 5}%"></span></div>
       <div class="small muted" style="margin-top:8px">What the agent is doing now</div><ol id="live" class="live"></ol></div>` : ""}

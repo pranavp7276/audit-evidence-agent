@@ -12,7 +12,7 @@ export async function route() {
   state.seq++;
   stopPolling();
   const { parts, q } = parseHash();
-  const section = { "": "dash", new: "new", rules: "rules", kb: "kb", guardrails: "guardrails", guide: "guide", audits: "runs", run: "runs" }[parts[0] ?? ""] || "runs";
+  const section = { "": "dash", alerts: "alerts", plan: "plan", audits: "runs", run: "runs", new: "new", exceptions: "exceptions", issues: "issues", risk: "risk", reports: "reports", guardrails: "guardrails", kb: "kb", rules: "rules", guide: "guide" }[parts[0] ?? ""] || "runs";
   document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === section));
   try {
     await (pages[parts[0]] || pages[""])({ parts, q });
