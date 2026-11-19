@@ -10,7 +10,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from agent.runtime.context import current_check, current_trace
+from agent.core.context import current_check, current_trace
 
 
 @dataclass(frozen=True)

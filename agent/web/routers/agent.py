@@ -5,8 +5,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
 
+from agent.core.toolkit import REGISTRY as TOOLS
 from agent.runtime import qa
-from agent.runtime.tools import REGISTRY as TOOLS
 from agent.web.common import _all, _completed, _run_or_404
 
 router = APIRouter()

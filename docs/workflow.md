@@ -29,13 +29,13 @@ flowchart TD
 
 | Role | Module | Does | Never does |
 |---|---|---|---|
-| Parser | `agent/parser` | Reads the request into checks, period, sample size; flags low confidence | Runs a check |
+| Parser | `agent/intake` | Reads the request into checks, period, sample size; flags low confidence | Runs a check |
 | Planner | `runtime/planner.py` | Writes the plan to the trace: tools per check (declared by each check's `tools`), guardrail version, assumptions, unmatched references | Retrieves data |
-| Retriever | `agent/tools/*` via `runtime/tools.py` | Reads staging views through the read-only role; each call is timed, counted and attributed to a check | Decides a result |
+| Retriever | `agent/tools/*` via `core/toolkit.py` | Reads staging views through the read-only role; each call is timed, counted and attributed to a check | Decides a result |
 | Evaluator | `agent/checks/*` | Applies the rule; one finding per breaching event; cites every record | Uses a model |
 | Investigator | `runtime/investigator.py` | Retries failed accounts; looks for a recording or transcript under the mirrored session; re-runs the same check | Turns a gap into a pass by judgement; hides a gap |
 | Orchestrator | `runtime/orchestrator.py` | Order of work, trace, saving | Decides results |
-| Reporter | `agent/store.py`, `agent/pack` | Saves findings, builds the letter and pack | Edits findings after completion |
+| Reporter | `agent/services` (`store.py`, `pack.py`) | Saves findings, builds the letter and pack | Edits findings after completion |
 | Ask the audit | `runtime/qa.py` | Answers questions from the run's findings; rejects an answer that cites a finding no query returned | Writes or re-tests |
 
 ## Bounds and honest outcomes
@@ -46,4 +46,4 @@ flowchart TD
 
 ## Modules
 
-`agent/checks` (one module per check, plus `catalog.py` for titles and meanings) · `agent/tools` (one module per source) · `agent/runtime` (trace, registry, planner, investigator, orchestrator, QA) · `agent/pipeline.py` (sampling and run entry point) · `agent/web/routers/*` (one router per area) · `agent/web/static/js/*` (one script per page).
+`agent/checks` (one module per check, plus `catalog.py` for titles and meanings) · `agent/tools` (one module per source) · `agent/runtime` (planner, investigator, orchestrator, QA) · `agent/services/audit.py` (the use case) and `agent/intake` (parsing and sampling) · `agent/web/routers/*` (one router per area) · `agent/web/static/js/*` (one script per page).

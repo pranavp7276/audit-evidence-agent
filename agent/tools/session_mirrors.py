@@ -1,7 +1,7 @@
 """Mirrored call sessions: the same call logged by both dialers, linked by an authoritative cross-reference."""
 from __future__ import annotations
 
-from agent.runtime.tools import tool
+from agent.core.toolkit import tool
 from agent.tools._common import query
 
 

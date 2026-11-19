@@ -5,8 +5,8 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Request
 
 from agent.checks.catalog import CHECK_INFO
-from agent.db import connect
-from agent.pack.writer import DISPOSITIONS
+from agent.core.db import connect
+from agent.services.pack import DISPOSITIONS
 from agent.web.common import _LATEST_REVIEW, _all, _completed, _one, _run_or_404
 
 router = APIRouter()

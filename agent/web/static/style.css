@@ -76,6 +76,13 @@ details summary { cursor: pointer; color: var(--muted); font-size: 13px; margin:
 .tabs a.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 700; }
 .tabs a:hover { text-decoration: none; color: var(--text); }
 
+.subnav { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 14px; }
+.subnav-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-right: 4px; }
+.subnav a { padding: 4px 12px; border: 1px solid var(--border); border-radius: 14px; color: var(--muted); background: var(--surface); font-size: 13px; }
+.subnav a.active { color: #fff; background: var(--accent); border-color: var(--accent); font-weight: 700; }
+.subnav a.active .tag { color: var(--text); }
+.subnav a:hover { text-decoration: none; }
+
 /* ---------- tables ---------- */
 table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 th { text-align: left; font-size: 12px; font-weight: 700; color: var(--muted); background: var(--surface2); padding: 8px 10px; border-bottom: 1px solid var(--border-strong); }

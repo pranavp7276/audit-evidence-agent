@@ -11,9 +11,9 @@ from __future__ import annotations
 import re
 from uuid import UUID
 
-from agent import llm
-from agent.db import read_rows
-from agent.runtime.trace import Trace
+from agent.core import llm
+from agent.core.db import read_rows
+from agent.core.trace import Trace
 
 MAX_STEPS = 4
 MAX_ROWS = 15

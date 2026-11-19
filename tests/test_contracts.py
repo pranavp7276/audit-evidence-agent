@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from agent.contracts import Citation, Finding, SourceSystem, Status
+from agent.core.contracts import Citation, Finding, SourceSystem, Status
 
 CITE = Citation(source_system=SourceSystem.D4, source_table="raw.d4_contact_log", record_key="42")
 

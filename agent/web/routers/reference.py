@@ -6,10 +6,10 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from agent import llm
 from agent.checks.catalog import ASSUMPTIONS, CHECK_INFO, SOURCES, STATUS_MEANING
-from agent.db import read_rows
-from agent.pack.writer import DISPOSITIONS
+from agent.core import llm
+from agent.core.db import read_rows
+from agent.services.pack import DISPOSITIONS
 from agent.web.common import EXAMPLES, GAP_KEYS
 
 router = APIRouter()

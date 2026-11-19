@@ -11,7 +11,7 @@ from uuid import UUID
 
 from psycopg.types.json import Jsonb
 
-from agent.db import connect
+from agent.core.db import connect
 
 
 class Trace:

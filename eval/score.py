@@ -73,7 +73,7 @@ def load_gap_key(path: Path, account_col: str, check_col: str, status_col: str |
 
 
 def load_reported(run_id: str, match: str) -> tuple[set[Key], int]:
-    from agent.db import connect  # imported here so scoring logic is testable without a DB
+    from agent.core.db import connect  # imported here so scoring logic is testable without a DB
     with connect() as conn:
         gaps = conn.execute(
             f"""SELECT DISTINCT f.account_id, c.{match} AS chk

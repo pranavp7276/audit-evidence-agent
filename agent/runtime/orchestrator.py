@@ -1,32 +1,31 @@
-"""The orchestrator: runs one audit as plan -> retrieve and evaluate -> investigate -> report, recording every step in the trace.
+"""The orchestrator: runs one audit as plan -> retrieve and evaluate -> investigate, recording every step in the trace.
 
 It owns the order of work and nothing else. The planner decides what will be done, the checks (with their tools) decide each result,
-the investigator widens the search where evidence is missing, and the store saves. A run is bounded: one pass per check, at most
-MAX_RETRIES retries per failed account, one mirror lookup per provisional call. Whatever is still unresolved is reported as such.
+and the investigator widens the search where evidence is missing. A run is bounded: one pass per check, at most MAX_RETRIES retries
+per failed account, one mirror lookup per provisional call. Whatever is still unresolved is reported as such.
+
+It never writes. The audit service (agent/services/audit.py) saves the findings and the trace.
 """
 from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from uuid import UUID
 
-from agent import store
 from agent.checks import REGISTRY
-from agent.contracts import CheckSpec, Finding, Status
-from agent.runtime.context import current_check, current_trace
+from agent.core.context import current_check, current_trace
+from agent.core.contracts import CheckSpec, Finding, Status
+from agent.core.trace import Trace
 from agent.runtime.investigator import Investigator
 from agent.runtime.planner import build_plan
-from agent.runtime.trace import Trace
 
 
 def _counts(findings: list[Finding]) -> dict[str, int]:
     return {s.value: sum(f.status is s for f in findings) for s in (Status.EVIDENCED, Status.GAP, Status.CANNOT_DETERMINE)}
 
 
-def run_agent(run_id: UUID, checks: list[CheckSpec], scale: list[str], sample: list[str], origin: str, period: dict | None,
+def run_agent(trace: Trace, checks: list[CheckSpec], scale: list[str], sample: list[str], origin: str, period: dict | None,
               unresolved_refs: int, log: Callable[[str], None] = print) -> dict[str, list[Finding]]:
-    """Run the checks over the sample as an agent and save the findings and the trace. Returns the findings by check id."""
-    trace = Trace(run_id)
+    """Plan, test and investigate. Returns the findings by check id; the caller saves them and the trace."""
     trace_token = current_trace.set(trace)
     results: dict[str, list[Finding]] = {}
     try:
@@ -55,20 +54,6 @@ def run_agent(run_id: UUID, checks: list[CheckSpec], scale: list[str], sample: l
         Investigator(trace).review(runnable, scale, results)
         for spec in runnable:
             trace.flush_tool_stats(spec.check_id)
-        for spec in runnable:
-            findings = results[spec.check_id]
-            store.save_findings(run_id, findings)
-        total = _counts([f for fs in results.values() for f in fs])
-        trace.step("report", "reporter", f"Saved {sum(total.values()):,} finding(s): {total['evidenced']} evidenced, {total['gap']} gap(s), "
-                   f"{total['cannot_determine']} cannot determine. Every evidenced result and gap has its citations; the run took {trace.elapsed_ms() / 1000:.1f}s.",
-                   detail=total)
         return results
-    except Exception as exc:
-        trace.step("report", "reporter", f"The run stopped: {type(exc).__name__}: {exc}", status="failed")
-        raise
     finally:
         current_trace.reset(trace_token)
-        try:
-            trace.save()
-        except Exception as exc:  # the trace explains a run; losing it must not hide the run's own outcome
-            log(f"  (could not save the agent trace: {exc})")

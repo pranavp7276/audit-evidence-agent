@@ -6,7 +6,7 @@ evidence pack.
 
 Set APP_PASSWORD to require a password (any user name) before anything is served. The areas live in agent/web/routers/, shared
 helpers in agent/web/common.py. Findings come from audit.* and are never changed (docs/decisions.md D-005); runs go through
-agent.pipeline, the only writer of findings."""
+agent.services, the only writer of findings."""
 from __future__ import annotations
 
 import base64

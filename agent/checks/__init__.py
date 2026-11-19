@@ -7,7 +7,7 @@ from agent.checks.consent_before_contact import ConsentBeforeContactCheck
 from agent.checks.notice_timeline import NoticeTimelineCheck
 from agent.checks.recording_completeness import RecordingCompletenessCheck
 from agent.checks.verification_before_disclosure import VerificationBeforeDisclosureCheck
-from agent.contracts import CheckType
+from agent.core.contracts import CheckType
 
 REGISTRY: dict[CheckType, type[BaseCheck]] = {
     CheckType.CONSENT_BEFORE_CONTACT: ConsentBeforeContactCheck,

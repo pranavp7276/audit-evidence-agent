@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 
 from agent.checks.base import BaseCheck, cite
-from agent.contracts import Finding
+from agent.core.contracts import Finding
 from agent.tools import get_notices
 from agent.tools.dispatch_tracker import add_business_days, business_days_between
 from agent.tools.policy import rule_at, rule_int_at

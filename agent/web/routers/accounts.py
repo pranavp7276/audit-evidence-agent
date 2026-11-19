@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter
 
-from agent.db import read_rows
+from agent.core.db import read_rows
 from agent.web.common import _LATEST_REVIEW, _all, _one, _run_or_404
 
 router = APIRouter()

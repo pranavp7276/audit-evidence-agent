@@ -10,7 +10,7 @@ from uuid import UUID
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from agent.pack.writer import build_pack
+from agent.services.pack import build_pack
 from agent.web.common import _PACK_FILES, GAP_KEYS, _completed
 
 router = APIRouter()

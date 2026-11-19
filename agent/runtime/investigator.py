@@ -17,9 +17,9 @@ import time
 from collections import defaultdict
 
 from agent.checks import REGISTRY
-from agent.contracts import CheckSpec, CheckType, Finding, Status
-from agent.runtime.context import alt_evidence, current_check
-from agent.runtime.trace import Trace
+from agent.core.context import alt_evidence, current_check
+from agent.core.contracts import CheckSpec, CheckType, Finding, Status
+from agent.core.trace import Trace
 from agent.tools.session_mirrors import get_mirror_keys
 
 MAX_RETRIES = 2

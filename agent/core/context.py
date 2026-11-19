@@ -10,7 +10,7 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from agent.runtime.trace import Trace
+    from agent.core.trace import Trace
 
 current_trace: ContextVar[Trace | None] = ContextVar("current_trace", default=None)
 current_check: ContextVar[str | None] = ContextVar("current_check", default=None)

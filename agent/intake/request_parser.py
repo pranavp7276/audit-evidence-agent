@@ -1,6 +1,6 @@
 """Turn an audit request (PDF or email text) into a list of CheckSpecs.
 
-This is the main LLM step. Output must validate against agent.contracts.CheckSpec; anything
+This is the main LLM step. Output must validate against agent.core.contracts.CheckSpec; anything
 that does not validate is rejected, not patched. Compound questions become several checks
 sharing a question_ref (Q3 -> Q3a, Q3b). A question that maps to no known check type becomes
 check_type=OTHER so it still appears in the response as unanswered, never silently dropped.
@@ -16,8 +16,8 @@ import re
 from datetime import date, timedelta
 from pathlib import Path
 
-from agent import llm
-from agent.contracts import CheckSpec, CheckType, Request, SourceSystem
+from agent.core import llm
+from agent.core.contracts import CheckSpec, CheckType, Request, SourceSystem
 
 _QUESTION = re.compile(r"^\s*(Q\d+)\s*[.:)]\s*(.+?)\s*$", re.MULTILINE)
 _SEVERITY_LINE = re.compile(r"^\s*([A-Za-z][\w ]*?)\s+[-:]\s+.*$")
@@ -66,7 +66,7 @@ def read_request(path: str | Path, request_id: str) -> Request:
 
 def extract_sample_accounts(text: str) -> list[str]:
     """Account references listed after a 'Sampled accounts:' heading, in order, without duplicates, exactly as written.
-    They can be loan account numbers (what an auditor uses) or CN account ids; see agent.pipeline.resolve_references."""
+    They can be loan account numbers (what an auditor uses) or CN account ids; see agent.intake.sampling.resolve_references."""
     m = _ACCOUNT_BLOCK.search(text)
     return list(dict.fromkeys(t for t in re.split(r"[,\s]+", m.group(1)) if t)) if m else []
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 import random
 from datetime import date
 
-from agent.guardrails import split_clauses
+from agent.knowledge.guardrails import split_clauses
 
 SEED_USER = "book-seed"  # documents added by this script carry this name so a reload can replace them
 

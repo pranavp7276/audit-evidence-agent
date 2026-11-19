@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, time
 from functools import lru_cache
 
-from agent.runtime.tools import tool
+from agent.core.toolkit import tool
 from agent.tools._common import query, with_citation
 
 

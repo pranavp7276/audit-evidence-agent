@@ -7,9 +7,9 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from psycopg.types.json import Jsonb
 
-from agent.db import connect
-from agent.guardrails import SEVERITY_DEFAULT, split_clauses, suggest
-from agent.parser.request_parser import read_request
+from agent.core.db import connect
+from agent.intake.request_parser import read_request
+from agent.knowledge.guardrails import SEVERITY_DEFAULT, split_clauses, suggest
 from agent.web.common import _all, _one
 
 router = APIRouter()

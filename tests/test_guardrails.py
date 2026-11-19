@@ -3,7 +3,7 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
-from agent.guardrails import extract_parameters, split_clauses, suggest
+from agent.knowledge.guardrails import extract_parameters, split_clauses, suggest
 from agent.web.app import app
 
 CIRCULAR = """1. Calling hours: collection calls may be made only between 8:00 a.m. and 7:00 p.m.

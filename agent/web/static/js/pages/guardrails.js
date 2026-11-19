@@ -1,11 +1,11 @@
-import { app, state, api, post, esc, when, fdate, help, sevBadge, needName, refresh } from "../core.js";
+import { app, state, api, post, esc, when, fdate, help, sevBadge, needName, refresh, rulebookNav } from "../core.js";
 
 const WEIGHT_HELP = { 1: "Normal review order", 2: "Elevated: reviewed earlier", 3: "Highest priority: reviewed first" };
 export async function guardrailsPage(q) {
   const [list, docs] = await Promise.all([api("/api/guardrails"), api("/api/kb")]);
   const tab = q.show || "all";
   const shown = list.filter((g) => tab === "all" || g.status === tab);
-  app.innerHTML = `<div class="row between"><div><h1>Guardrails ${help("guardrails")}</h1>
+  app.innerHTML = `${rulebookNav("#/guardrails")}<div class="row between"><div><h1>Guardrails ${help("guardrails")}</h1>
       <p class="muted">What the audit tests, how serious a failure is, and how reviewers should order their work. Each change is a new version; an audit records the version it applied.</p></div>
       <button class="primary" id="newg">New guardrail</button></div>
     <div class="card"><div class="grid cols3" style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px">

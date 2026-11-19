@@ -87,3 +87,10 @@ export function download(name, text, type = "text/plain") {
 /* Pages never import the router: they ask for navigation through these two. */
 export const navigate = (hash) => { location.hash = hash; };
 export const refresh = () => window.dispatchEvent(new Event("app:refresh"));
+
+/* A row of links for the pages inside one area; items are [href, label, count?]. */
+export const subnav = (items, activeHref, label = "") =>
+  `<nav class="subnav no-print" aria-label="${esc(label)}">${label ? `<span class="subnav-label">${esc(label)}</span>` : ""}${items.map(([href, text, n]) => `<a href="${href}" class="${href === activeHref ? "active" : ""}">${esc(text)}${n ? ` <span class="tag">${num(n)}</span>` : ""}</a>`).join("")}</nav>`;
+
+/* The three pages that together say what an audit is tested against. */
+export const rulebookNav = (active) => subnav([["#/kb", "1. Knowledge base"], ["#/guardrails", "2. Guardrails"], ["#/rules", "3. Rules & data"]], active, "Rulebook");

@@ -33,7 +33,7 @@ def test_unknown_run_and_table():
 
 
 def _completed_run():
-    from agent.db import connect
+    from agent.core.db import connect
 
     with connect() as conn:
         row = conn.execute("""SELECT r.run_id FROM audit.runs r WHERE r.status = 'completed' AND EXISTS (

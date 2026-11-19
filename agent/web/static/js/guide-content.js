@@ -11,13 +11,12 @@ export const GUIDE = [
       <tr><td><strong>Team member</strong></td><td>Maintains the data in the database, the guardrails and the knowledge base, and the code. See <a href="#/guide/data">Working with the data</a> and <a href="#/guide/team">Team setup</a>.</td></tr></tbody></table>
     <h2>The menu</h2>
     <ul>
-      <li><strong>Audit requests</strong>: every audit, its status, results and review progress.</li>
-      <li><strong>New audit request</strong>: upload or paste a request and run it.</li>
-      <li><strong>Knowledge base</strong>: the circulars and policies guardrails come from.</li>
-      <li><strong>Guardrails</strong>: what is tested, how serious a failure is, and review priority.</li>
-      <li><strong>Rules &amp; data</strong>: the limits in force (D12), what each check tests, the assumptions, and the data the platform reads.</li>
-      <li><strong>Data explorer</strong> (bottom left): a read-only SQL box for analysts.</li>
+      <li><strong>Audit work</strong>: <em>Audit requests</em> lists every audit with its status and review progress; <em>New audit request</em> starts one.</li>
+      <li><strong>Rulebook</strong>, read in order: <em>1. Knowledge base</em> (the circulars and policies), <em>2. Guardrails</em> (what is tested, how serious a failure is, review priority), <em>3. Rules &amp; data</em> (the limits in force, what each check tests, the assumptions, the data read).</li>
+      <li><strong>Help</strong>: this guide. <strong>Data explorer</strong> (bottom left) is a read-only SQL box for analysts.</li>
     </ul>
+    <h2>Inside an audit</h2>
+    <p>An open audit has five tabs that follow the work, left to right: <strong>Overview</strong> (where you are and what is next), <strong>Findings</strong> (by question, the gap register, the follow-up list), <strong>Accounts</strong> (everything tested for one account), <strong>Respond</strong> (the letter, then the evidence pack) and <strong>Agent</strong> (what the agent did, and questions about the results).</p>
     <h2>Every result is one of three</h2>
     <table><thead><tr><th>Result</th><th>Meaning</th></tr></thead><tbody>
       <tr><td><span class="badge b-evidenced">Evidenced</span></td><td>Records prove it. Every evidenced result cites them.</td></tr>

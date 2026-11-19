@@ -1,4 +1,4 @@
-import { api, esc, num, fdate, help, badge } from "../core.js";
+import { api, esc, num, fdate, help, badge, rulebookNav } from "../core.js";
 
 export async function rulesPage(el, standalone, runId, done) {
   const [r, src] = await Promise.all([api("/api/rules"), api("/api/data-sources")]);
@@ -11,7 +11,7 @@ export async function rulesPage(el, standalone, runId, done) {
     pol[k].forEach((p) => (groups[p.institution_code || "all lenders"] ||= []).push(p));
     return `<div><span class="muted">${esc(k.replace(/_/g, " "))}</span>${Object.entries(groups).map(([inst, ps]) => `<div class="small">${esc(LENDER[inst] || inst)}: ${ps.map((p) => `<strong>${esc(p.rule_value)}</strong> <span class="muted">(${when_(p)})</span>`).join(", ")}</div>`).join("")}</div>`;
   }).filter(Boolean).join("");
-  el.innerHTML = `${standalone ? `<h1>Rules &amp; data ${help("data")}</h1><p class="muted">How results are decided, the limits in force, the interpretations the platform applies, and what data it reads. Use this to defend a result to the lender.</p>` : ""}
+  el.innerHTML = `${standalone ? `${rulebookNav("#/rules")}<h1>Rules &amp; data ${help("data")}</h1><p class="muted">How results are decided, the limits in force, the interpretations the platform applies, and what data it reads. Use this to defend a result to the lender.</p>` : ""}
     <div class="card"><h2>How to read a result</h2><table><tbody>${Object.entries(r.status_meaning).map(([k, v]) => `<tr><td style="width:170px">${badge(k)}</td><td>${esc(v)}</td></tr>`).join("")}</tbody></table></div>
     <div class="card"><h2>What each check tests</h2><table><thead><tr><th>Check</th><th>Passes when</th><th>Gap when</th><th>Limits in force (D12)</th><th>Sources</th></tr></thead><tbody>
       ${Object.entries(r.checks).filter(([k]) => k !== "other").map(([k, i]) => `<tr><td><strong>${esc(i.title)}</strong><div class="small muted mono">${esc(k)}</div></td><td>${esc(i.tests)}</td><td>${esc(i.gap)}${i.unknown && !/^None|^n\/a/.test(i.unknown) ? `<div class="small muted">Cannot determine: ${esc(i.unknown)}</div>` : ""}</td><td class="small">${lim(i.limits) || "—"}</td><td class="small">${(i.sources || []).map(esc).join(", ")}</td></tr>`).join("")}</tbody></table></div>

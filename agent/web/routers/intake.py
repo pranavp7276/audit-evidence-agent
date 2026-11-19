@@ -9,11 +9,12 @@ from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
-from agent import store
-from agent.contracts import CheckSpec, CheckType
-from agent.contracts import Request as AuditRequest
-from agent.parser.request_parser import _SOURCES, parse_checks_with_info, parse_sample, read_request
-from agent.pipeline import MAX_SAMPLE, contacted_accounts, process, resolve_references
+from agent.core.contracts import CheckSpec, CheckType
+from agent.core.contracts import Request as AuditRequest
+from agent.intake.request_parser import _SOURCES, parse_checks_with_info, parse_sample, read_request
+from agent.intake.sampling import MAX_SAMPLE, contacted_accounts, resolve_references
+from agent.services import store
+from agent.services.audit import process
 from agent.web.common import _RUN_LOCK, ROOT
 
 router = APIRouter()

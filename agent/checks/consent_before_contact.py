@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from agent.checks.base import BaseCheck, cite, mask
-from agent.contracts import Finding
+from agent.core.contracts import Finding
 from agent.tools import get_consents, get_messages
 from agent.tools.contact_log import SENT_STATUSES
 

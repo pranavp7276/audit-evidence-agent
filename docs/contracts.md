@@ -1,6 +1,6 @@
 # Contracts between modules
 
-The source of truth is `agent/contracts.py`; this page explains it. Change both together.
+The source of truth is `agent/core/contracts.py`; this page explains it. Change both together.
 
 ## CheckSpec (parser → checks)
 | Field | Meaning |

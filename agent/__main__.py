@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import argparse
 
-from agent import store
-from agent.pack.writer import build_pack
-from agent.parser.request_parser import read_request
-from agent.pipeline import process
+from agent.intake.request_parser import read_request
+from agent.services import store
+from agent.services.audit import process
+from agent.services.pack import build_pack
 
 
 def run(request_path: str, request_id: str) -> None:

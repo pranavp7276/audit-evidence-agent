@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from agent.checks.base import RULE_TZ, BaseCheck, cite, mask
-from agent.contracts import Finding
+from agent.core.contracts import Finding
 from agent.tools import get_calls
 from agent.tools.policy import rule_at, rule_int_at, rule_time_at
 

@@ -3,7 +3,7 @@
 
 from fastapi import APIRouter, HTTPException, Request
 
-from agent.db import read_rows
+from agent.core.db import read_rows
 from agent.tools.warehouse_sql import run_sql
 from agent.web.common import _KEYS
 

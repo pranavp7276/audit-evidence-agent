@@ -22,7 +22,7 @@ from datetime import date
 from pathlib import Path
 from uuid import UUID
 
-from agent.db import connect
+from agent.core.db import connect
 
 OUT = Path(__file__).resolve().parents[2] / "out"
 _STATUSES = ("evidenced", "gap", "cannot_determine")

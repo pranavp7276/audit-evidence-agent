@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from agent.contracts import CheckType, Request
-from agent.parser.request_parser import _parse_fallback, extract_sample_accounts
+from agent.core.contracts import CheckType, Request
+from agent.intake.request_parser import _parse_fallback, extract_sample_accounts
 
 TEXT = """Q1. Show consent before every WhatsApp message.
 Q2. Confirm calls were within permitted hours and within the permitted frequency.
@@ -44,7 +44,7 @@ def test_synthetic_request_parses_to_seven_checks():
 def test_instruction_request_becomes_a_full_audit_with_period_and_size():
     from datetime import date
 
-    from agent.parser.request_parser import DEFAULT_SCALE, _parse_fallback, parse_sample
+    from agent.intake.request_parser import DEFAULT_SCALE, _parse_fallback, parse_sample
 
     text = ("Run a compliance audit for all the accounts reached out within the previous month, all the necessary "
             "guardrails mentioned in the rules & data, are they being followed or not, and have put a sample size of 300")
@@ -57,7 +57,7 @@ def test_instruction_request_becomes_a_full_audit_with_period_and_size():
 
 
 def test_instruction_naming_one_topic_tests_only_that():
-    from agent.parser.request_parser import _parse_fallback
+    from agent.intake.request_parser import _parse_fallback
 
     checks, _ = _parse_fallback(Request(request_id="T", source="text", text="Check calling hours for last month, 50 accounts"))
     assert [c.check_type for c in checks] == [CheckType.CALLING_HOURS]
@@ -66,7 +66,7 @@ def test_instruction_naming_one_topic_tests_only_that():
 def test_periods_are_understood():
     from datetime import date
 
-    from agent.parser.request_parser import parse_sample
+    from agent.intake.request_parser import parse_sample
 
     today = date(2026, 1, 15)  # the previous month crosses a year boundary
     assert parse_sample("accounts contacted last month", today)["period"]["start"] == "2025-12-01"
@@ -80,7 +80,7 @@ def test_periods_are_understood():
 def test_month_year_to_month_year_period():
     from datetime import date
 
-    from agent.parser.request_parser import parse_sample
+    from agent.intake.request_parser import parse_sample
 
     p = parse_sample("covering November 2025 to October 2026", date(2026, 11, 19))["period"]
     assert (p["start"], p["end"]) == ("2025-11-01", "2026-11-01")

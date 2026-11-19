@@ -8,7 +8,7 @@ import psycopg
 from fastapi import FastAPI, HTTPException
 from psycopg.rows import dict_row
 
-from agent.db import database_url
+from agent.core.db import database_url
 
 ROOT = Path(__file__).resolve().parents[2]
 STATIC = Path(__file__).parent / "static"

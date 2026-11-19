@@ -11,7 +11,7 @@ Scored on hidden requests: gap recall >= 95%, false gaps < 5%, zero claims witho
 ## Non-negotiable rules
 1. **No claim without a cited record.** A Finding with status `evidenced` or `gap` must carry at
    least one Citation. If evidence is missing or ambiguous, the status is `cannot_determine`.
-   This is enforced in `agent/contracts.py` and again by a database trigger. Never work around it.
+   This is enforced in `agent/core/contracts.py` and again by a database trigger. Never work around it.
 2. **Never drop or soften a gap.** Do not filter, merge away or reword gaps to look better.
 3. **Compare timestamps only in UTC**, using `*_utc` columns from `staging`. Sources use
    different time zones on purpose. Never parse raw timestamps in Python.
@@ -19,7 +19,7 @@ Scored on hidden requests: gap recall >= 95%, false gaps < 5%, zero claims witho
    UTC (db/staging/R__*.sql). `audit` = agent output (db/migrations). Tools read `staging` only.
 5. **Migrations are append-only.** Never edit a `db/migrations/V###__*.sql` file that exists on
    `main`; add a new one with the next free number. Staging files (`R__*`) may be edited.
-6. **Contracts are shared.** Changing `agent/contracts.py` or `docs/contracts.md` needs a note in
+6. **Contracts are shared.** Changing `agent/core/contracts.py` or `docs/contracts.md` needs a note in
    `docs/decisions.md` and review from every module owner.
 7. **Calling hours and frequency limits come from D12.** Never hard-code them.
 8. **Data minimisation.** Citation `extract` holds only the fields the request needs.
@@ -30,9 +30,10 @@ Scored on hidden requests: gap recall >= 95%, false gaps < 5%, zero claims witho
     silently in code: check decisions.md, and if it is not there, stop and ask.
 
 ## Where things are
-- `agent/contracts.py` types every module exchanges (CheckSpec, Finding, Citation)
-- `agent/tools/` the 7 mandated tools; `agent/checks/` one module per check type
-- `agent/store.py` the only code that writes to the database
+- `agent/core/contracts.py` types every module exchanges (CheckSpec, Finding, Citation)
+- The code is six layers, each importing only from layers below it (enforced by `tests/test_architecture.py`): core, tools, checks/intake/knowledge, runtime, services, web. See `docs/architecture.md` before adding a module.
+- `agent/tools/` the data sources the agent reads; `agent/checks/` one module per check type; `agent/runtime/` the agent (never writes)
+- `agent/services/store.py` the only code that writes to the database
 - `eval/score.py` scorer; run it before and after any change to checks
 - `docs/data_dictionary.md` columns, keys and time zone of every source
 

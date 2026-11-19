@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from agent.checks import REGISTRY
 from agent.checks.catalog import CHECK_INFO
-from agent.contracts import CheckSpec
-from agent.runtime.tools import REGISTRY as TOOLS
-from agent.runtime.trace import Trace
+from agent.core.contracts import CheckSpec
+from agent.core.toolkit import REGISTRY as TOOLS
+from agent.core.trace import Trace
 
 
 def build_plan(checks: list[CheckSpec], sample_size: int, period: dict | None, origin: str, unresolved_refs: int, trace: Trace) -> list[dict]:

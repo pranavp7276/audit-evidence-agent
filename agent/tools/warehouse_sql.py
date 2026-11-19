@@ -4,8 +4,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from agent.db import connect
-from agent.runtime.tools import tool
+from agent.core.db import connect
+from agent.core.toolkit import tool
 
 _FORBIDDEN = re.compile(
     r"\b(insert|update|delete|merge|drop|alter|create|truncate|grant|revoke|copy|vacuum)\b",

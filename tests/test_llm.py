@@ -1,9 +1,9 @@
 import httpx
 import pytest
 
-from agent import llm
-from agent.contracts import CheckType, Request
-from agent.parser import request_parser as rp
+from agent.core import llm
+from agent.core.contracts import CheckType, Request
+from agent.intake import request_parser as rp
 
 KEY = "sk_test_do_not_leak_0123456789"
 

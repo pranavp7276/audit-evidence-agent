@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from agent.checks.base import BaseCheck, cite
-from agent.contracts import Finding
+from agent.core.contracts import Finding
 from agent.tools import get_calls, get_recordings, get_transcripts
 
 _CALL = ("dialer_code", "direction", "process_mode", "statuses", "started_ts_src", "started_ts_src_tz")

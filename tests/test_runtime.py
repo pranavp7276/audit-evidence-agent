@@ -2,15 +2,15 @@ from uuid import uuid4
 
 import pytest
 
-from agent import llm
 from agent.checks import REGISTRY as CHECKS
-from agent.contracts import CheckSpec, CheckType
+from agent.core import llm
+from agent.core.context import current_check, current_trace
+from agent.core.contracts import CheckSpec, CheckType
+from agent.core.toolkit import REGISTRY as TOOLS
+from agent.core.toolkit import tool
+from agent.core.trace import Trace
 from agent.runtime import qa
-from agent.runtime.context import current_check, current_trace
 from agent.runtime.planner import build_plan
-from agent.runtime.tools import REGISTRY as TOOLS
-from agent.runtime.tools import tool
-from agent.runtime.trace import Trace
 from agent.tools import TOOLS as TOOL_FUNCS
 
 

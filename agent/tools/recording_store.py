@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from agent.runtime.context import alt_evidence
-from agent.runtime.tools import tool
+from agent.core.context import alt_evidence
+from agent.core.toolkit import tool
 from agent.tools._common import query, with_citation
 
 

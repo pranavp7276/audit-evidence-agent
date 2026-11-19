@@ -1,4 +1,4 @@
-import { app, api, post, esc, num, help, fdate, needName, navigate, refresh } from "../core.js";
+import { app, api, post, esc, num, help, fdate, needName, navigate, refresh, rulebookNav } from "../core.js";
 
 const SAMPLE_CIRCULAR = `1. Calling hours: collection calls to borrowers may be made only between 8:00 a.m. and 6:50 p.m. local time.
 
@@ -16,7 +16,7 @@ const SAMPLE_CIRCULAR = `1. Calling hours: collection calls to borrowers may be 
 
 export async function kbPage() {
   const docs = await api("/api/kb");
-  app.innerHTML = `<h1>Knowledge base ${help("guardrails")}</h1>
+  app.innerHTML = `${rulebookNav("#/kb")}<h1>Knowledge base ${help("guardrails")}</h1>
     <p class="muted">The circulars, policies and SOPs that guardrails come from. Upload one, split it into clauses, and turn each testable obligation into a guardrail linked to its clause.</p>
     <div class="card"><h2>Documents</h2>
       ${docs.length ? `<table><thead><tr><th>Document</th><th>Type</th><th>Reference</th><th>Effective</th><th class="num">Clauses</th><th class="num">Guardrails</th></tr></thead><tbody>

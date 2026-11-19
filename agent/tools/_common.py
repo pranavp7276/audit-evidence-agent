@@ -1,7 +1,7 @@
 """Shared helpers for the tools: every returned row carries the fields a Citation needs."""
 from __future__ import annotations
 
-from agent.db import read_rows
+from agent.core.db import read_rows
 
 
 def query(sql: str, params: tuple | dict | None = None) -> list[dict]:

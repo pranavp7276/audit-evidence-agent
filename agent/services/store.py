@@ -6,8 +6,8 @@ from uuid import UUID
 
 from psycopg.types.json import Jsonb
 
-from agent.contracts import CheckSpec, Finding, Request
-from agent.db import connect
+from agent.core.contracts import CheckSpec, Finding, Request
+from agent.core.db import connect
 
 
 def _git_sha() -> str | None:

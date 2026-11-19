@@ -2,11 +2,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import UTC, date, datetime, time
-from zoneinfo import ZoneInfo
 
-from agent.contracts import CheckSpec, Citation, Finding, Status
-
-RULE_TZ = ZoneInfo("Asia/Kolkata")  # zone D12 hours/limits and the cert register use (docs/decisions.md D-009)
+from agent.core.clock import RULE_TZ
+from agent.core.contracts import CheckSpec, Citation, Finding, Status
 
 Event = tuple[str, str, list[Citation]]  # (subject_ref, reason, citations)
 

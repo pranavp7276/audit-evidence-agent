@@ -53,14 +53,15 @@ Without a key the keyword reader is used. Synthetic data: `python scripts/gen_sy
 
 ## How it fits together
 ```
-request (PDF/email)
-   └─ agent/parser        → CheckSpec[]            (LLM: split and interpret questions)
-        └─ agent/checks   → Finding[] + Citation[]  (code: test evidence per account)
-             ├─ agent/tools        read staging.* through a read-only role
-             └─ agent/store        write audit.*   (guardrails enforced by the DB)
-                  └─ agent/pack    → index, extracts, gap report, response letter
-                  └─ eval/score.py → recall, false-gap rate, unsupported claims
+request (PDF/email or plain instruction)
+   └─ agent/intake        → checks, period, sample        (a model reads the wording)
+        └─ agent/runtime  plan → evaluate → investigate   (the agent; never writes)
+             ├─ agent/checks   → Finding[] + Citation[]    (code decides each result)
+             └─ agent/tools    read staging.* through a read-only role
+        └─ agent/services save audit.* (the DB enforces citations), build the letter and pack
+             └─ eval/score.py → recall, false-gap rate, unsupported claims
 ```
+Six layers, each importing only from layers below it: see [docs/architecture.md](docs/architecture.md). The agent's loop: [docs/workflow.md](docs/workflow.md).
 
 | Schema | Holds | Owned by |
 |---|---|---|

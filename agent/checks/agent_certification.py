@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from agent.checks.base import RULE_TZ, BaseCheck, cite
-from agent.contracts import Finding
+from agent.core.contracts import Finding
 from agent.tools import get_calls, get_certifications, get_collector
 
 _CALL = ("dialer_code", "employee_code", "started_ts_src", "started_ts_src_tz")

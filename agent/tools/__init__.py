@@ -5,7 +5,7 @@ Tools read only from staging.* (never raw.* or cn_core.* directly, never audit.*
 connection, and return records that already carry what a Citation needs:
 source_system, source_table, record_key, the UTC timestamp and the original timestamp.
 """
-from agent.runtime.tools import REGISTRY as _REGISTRY
+from agent.core.toolkit import REGISTRY as _REGISTRY
 from agent.tools.certification_register import get_certifications, get_collector
 from agent.tools.consent_registry import get_consents
 from agent.tools.contact_log import get_calls, get_messages

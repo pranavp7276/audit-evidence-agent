@@ -12,8 +12,8 @@ from __future__ import annotations
 import re
 from datetime import date
 
-from agent import llm
-from agent.db import read_rows
+from agent.core import llm
+from agent.core.db import read_rows
 
 SEVERITY_DEFAULT = {"consent_before_contact": "Critical", "calling_hours": "Critical", "calling_frequency": "Critical",
                     "verification_before_disclosure": "Critical", "notice_timeline": "Major", "agent_certification": "Major",
