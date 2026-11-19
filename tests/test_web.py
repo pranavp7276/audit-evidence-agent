@@ -11,7 +11,7 @@ client = TestClient(app)
 def test_front_end_is_served():
     r = client.get("/")
     assert r.status_code == 200 and "Audit Evidence Platform" in r.text
-    assert client.get("/static/app.js").status_code == 200
+    assert client.get("/static/js/main.js").status_code == 200
 
 
 def test_password_gate(monkeypatch):
