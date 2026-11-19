@@ -24,6 +24,7 @@ python -m agent serve                                          # http://127.0.0.
 python -m agent serve --host 0.0.0.0                           # let coworkers on your network connect
 APP_PASSWORD=choose-one python -m agent serve --host 0.0.0.0   # require a password (any user name)
 ```
+New users and team members: open **Guide** in the left menu (how to run an audit, review results, work with the data, set up a machine).
 The data is a CN Core replica (docs/cn_core_model.md). The auditor's workflow, start to finish:
 1. **New audit request:** upload or paste the request (PDF, `.eml`, text), either numbered questions or a plain
    instruction such as *"Run a compliance audit for all accounts contacted in the previous month, sample size 300"*

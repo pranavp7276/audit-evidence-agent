@@ -1,6 +1,6 @@
 "use strict";
 const app = document.getElementById("app");
-const state = { poll: null, config: {}, rules: null };
+const state = { poll: null, config: {}, rules: null, seq: 0 };
 
 /* ================= helpers ================= */
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -20,7 +20,9 @@ const SOURCE_TABLE = { call: "cn_core.tele_process_instance_call_logs", whatsapp
   consent: "compliance.customer_consent", recording: "compliance.call_recording", notice: "compliance.notice" };
 
 async function api(path, opts) {
+  const gen = state.seq, isGet = !opts || !opts.method || opts.method === "GET";
   const r = await fetch(path, opts);
+  if (isGet && gen !== state.seq) throw Object.assign(new Error("superseded"), { stale: true }); // the user already navigated elsewhere
   if (!r.ok) {
     let msg = r.statusText;
     try { const j = await r.json(); msg = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail); } catch (_) {}
@@ -52,6 +54,7 @@ function stackBar(e, g, u) {
   return `<div class="bar" title="${e} evidenced, ${g} gap, ${u} cannot determine"><span class="e" style="width:${(e / t) * 100}%"></span><span class="g" style="width:${(g / t) * 100}%"></span><span class="u" style="width:${(u / t) * 100}%"></span></div>`;
 }
 const stat = (n, label, cls = "") => `<div class="stat ${cls}"><div class="n">${num(n)}</div><div class="l">${esc(label)}</div></div>`;
+const help = (topic) => `<a class="help no-print" href="#/guide/${topic}">Help</a>`;
 const info = (type) => (state.rules && state.rules.checks[type]) || { title: type, tests: "", sources: [] };
 
 function inline(s) {
@@ -91,13 +94,15 @@ function parseHash() {
   return { parts: path.split("/").filter(Boolean), q: Object.fromEntries(new URLSearchParams(query)) };
 }
 async function route() {
+  state.seq++;
   stopPolling();
   const { parts, q } = parseHash();
-  const section = { new: "new", rules: "rules", kb: "kb", guardrails: "guardrails" }[parts[0]] || "runs";
+  const section = { new: "new", rules: "rules", kb: "kb", guardrails: "guardrails", guide: "guide" }[parts[0]] || "runs";
   document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === section));
   try {
     if (parts[0] === "new") await newRequestPage();
     else if (parts[0] === "rules") await rulesPage(app, true);
+    else if (parts[0] === "guide") guidePage(parts[1] || "start");
     else if (parts[0] === "kb" && parts[1]) await kbDocPage(parts[1]);
     else if (parts[0] === "kb") await kbPage();
     else if (parts[0] === "guardrails") await guardrailsPage(q);
@@ -105,6 +110,7 @@ async function route() {
     else if (parts[0] === "run" && parts[1]) await workspace(parts[1], parts[2] || "summary", parts[3], q);
     else await homePage();
   } catch (e) {
+    if (e.stale) return;
     app.innerHTML = `<div class="err">${esc(e.message)}</div><p><a href="#/">Back to audit requests</a></p>`;
   }
   window.scrollTo(0, 0);
@@ -115,8 +121,10 @@ window.addEventListener("hashchange", route);
 async function homePage() {
   const runs = await api("/api/runs");
   const today = new Date().toISOString().slice(0, 10);
+  let seen = false; try { seen = !!localStorage.getItem("seenGuide"); } catch (_) {}
   app.innerHTML = `
-    <div class="row between"><div><h1>Audit requests</h1>
+    ${seen ? "" : `<div class="note info hint"><span><strong>New here?</strong> The <a href="#/guide/start">Guide</a> explains how to run an audit, review the results and work with the data. It takes five minutes.</span><button id="hide-hint">Got it</button></div>`}
+    <div class="row between"><div><h1>Audit requests ${help("audit")}</h1>
       <p class="muted">Each audit request from a lender or regulator becomes an engagement: the platform tests the evidence for every sampled account, and you review the gaps, follow up what could not be proven, and release the response.</p></div>
       <a class="btn primary big" href="#/new">New audit request</a></div>
     <div class="card">
@@ -130,6 +138,8 @@ async function homePage() {
         }).join("")}</tbody></table>` : `<div class="empty"><p>No audit requests yet.</p><a class="btn primary" href="#/new">Start your first audit request</a></div>`}
     </div>`;
   app.querySelectorAll("tr[data-run]").forEach((tr) => tr.addEventListener("click", () => (location.hash = `#/run/${tr.dataset.run}`)));
+  const hh = document.getElementById("hide-hint");
+  if (hh) hh.onclick = () => { try { localStorage.setItem("seenGuide", "1"); } catch (_) {} hh.closest(".note").remove(); };
 }
 
 /* ================= new request: upload, confirm interpretation, run ================= */
@@ -139,7 +149,7 @@ async function newRequestPage() {
   const examples = await api("/api/examples");
   const f = draft.form;
   app.innerHTML = `
-    <h1>New audit request</h1>
+    <h1>New audit request ${help("audit")}</h1>
     <div class="steps"><span class="${draft.preview ? "done" : "on"}">1. Upload the request</span><span class="${draft.preview ? "on" : ""}">2. Confirm how it is read</span><span>3. Run and review</span></div>
     <div class="card"><form id="intake">
       <div class="grid cols2">
@@ -152,7 +162,7 @@ async function newRequestPage() {
         <span class="small muted">Try an example: <button type="button" class="link" data-instruction>plain instruction</button>${examples.map((n) => ` · <button type="button" class="link" data-example="${esc(n)}">${esc(n)}</button>`).join("")}</span></div>
         <textarea id="text" placeholder="Paste the numbered questions, the severity scale and the sampled accounts, or simply write the instruction, e.g. &quot;Run a compliance audit for all accounts contacted in the previous month, sample size 300&quot;.">${esc(f.text || "")}</textarea></div>
       <details><summary>Have a specific list of accounts to test?</summary><div class="grid cols2">
-        <div><label for="accts">Account ids (comma separated)</label><input id="accts" type="text" value="${esc(f.accts || "")}" placeholder="ACC00001, ACC00002"></div></div></details>
+        <div><label for="accts">Loan account numbers (comma separated)</label><input id="accts" type="text" value="${esc(f.accts || "")}" placeholder="CNF123456789, CNF987654321"></div></div></details>
       <div class="row" style="margin-top:14px"><button class="primary big" id="read">Read the request</button><span id="intake-err"></span></div>
     </form></div>
     <div id="confirm"></div>`;
@@ -411,7 +421,7 @@ function findingItem(f, scale, reviewable, selectable) {
   return `<div class="finding" data-id="${f.finding_id}"><div class="head">
     ${selectable ? `<input type="checkbox" class="sel" data-id="${f.finding_id}" title="Select for a bulk decision" style="width:auto;margin-top:5px">` : ""}
     ${badge(f.status)} ${sevBadge(f.severity, scale)} ${f.status !== "evidenced" ? dispBadge(f.disposition) : ""}
-    <div class="reason"><div>${esc(f.reason)}</div><div class="small muted"><a class="mono" href="#/run/${f.run_id}/account/${encodeURIComponent(f.account_id)}">${esc(f.account_id)}</a> · ${esc(f.check_id)} ${esc(info(f.check_type).title)}${f.subject_ref ? ` · ${esc(f.subject_ref)}` : ""}</div></div>
+    <div class="reason"><div>${esc(f.reason)}</div><div class="small muted"><a class="mono" href="#/run/${f.run_id}/account/${encodeURIComponent(f.account_id)}" title="CN account id ${esc(f.account_id)}">${esc(f.account_number || f.account_id)}</a> · ${esc(f.check_id)} ${esc(info(f.check_type).title)}${f.subject_ref ? ` · ${esc(f.subject_ref)}` : ""}</div></div>
     ${f.priority_weight > 1 ? `<span class="tag" title="Review priority weight">priority ${f.priority_weight}</span>` : ""}<span class="tag">${f.citations.length} record${f.citations.length === 1 ? "" : "s"}</span></div>
     <div class="body" hidden>
       <div class="small"><strong>Test applied:</strong> ${esc(info(f.check_type).tests)}</div>
@@ -465,12 +475,12 @@ async function findingsPage(el, d, runId, scale, o) {
     : "All findings for this question, with the records they cite.";
   el.innerHTML = `
     ${o.mode === "question" ? `<p class="small"><a href="#/run/${runId}/questions">&larr; All questions</a></p>` : ""}
-    <h2>${esc(title)}</h2><p class="muted small">${blurb}</p>
+    <h2>${esc(title)} ${help("review")}</h2><p class="muted small">${blurb}</p>
     <div class="card no-print"><form id="flt" class="row">
       ${o.mode !== "question" ? `<div><label>Question</label><select name="question"><option value="">All</option>${questions.map((x) => `<option ${x === f.question ? "selected" : ""}>${esc(x)}</option>`).join("")}</select></div>` : `<div><label>Status</label><select name="status"><option value="">Any</option>${["gap", "evidenced", "cannot_determine"].map((s) => `<option value="${s}" ${s === f.status ? "selected" : ""}>${STATUS_LABEL[s]}</option>`).join("")}</select></div>`}
       ${o.mode !== "followup" ? `<div><label>Severity</label><select name="severity"><option value="">Any</option>${scale.map((s) => `<option ${s === f.severity ? "selected" : ""}>${esc(s)}</option>`).join("")}</select></div>` : ""}
       <div><label>Review status</label><select name="disposition"><option value="">Any</option>${Object.entries(DISP_LABEL).map(([k, v]) => `<option value="${k}" ${k === f.disposition ? "selected" : ""}>${v}</option>`).join("")}</select></div>
-      <div style="flex:1;min-width:150px"><label>Account contains</label><input type="search" name="account" value="${esc(f.account)}" placeholder="ACC00110"></div>
+      <div style="flex:1;min-width:150px"><label>Loan account contains</label><input type="search" name="account" value="${esc(f.account)}" placeholder="CNF123456789"></div>
       <div style="align-self:flex-end" class="row"><button class="primary">Filter</button>
         ${o.mode === "gaps" && reviewable ? `<a class="btn" href="/api/runs/${runId}/files/gap_report.csv">Download CSV</a>` : o.mode === "followup" && reviewable ? `<a class="btn" href="/api/runs/${runId}/files/follow_up.csv">Download CSV</a>` : ""}</div></form></div>
     <div id="bulk-host"></div>
@@ -508,12 +518,16 @@ async function accountsTab(el, d, runId, q) {
   const page = +(q.page || 0), size = 50, only = q.gaps === "1";
   const data = await api(`/api/runs/${runId}/accounts?${new URLSearchParams({ q: q.q || "", only_gaps: only, limit: size, offset: page * size })}`);
   const link = (over) => `#/run/${runId}/accounts?` + new URLSearchParams(Object.entries({ ...q, ...over }).filter(([, v]) => v !== "" && v != null)).toString();
-  el.innerHTML = `<h2>Sampled accounts</h2><p class="muted small">Open an account to see every record involved on one timeline, with the events behind each finding highlighted.</p>
-    <div class="card no-print"><form id="af" class="row"><div style="flex:1;min-width:180px"><label>Account contains</label><input type="search" name="q" value="${esc(q.q || "")}" placeholder="ACC00110"></div>
+  const unresolved = (d.coverage && d.coverage.unresolved) || [];
+  el.innerHTML = `${unresolved.length ? `<div class="card"><h2>Account references not tested (${unresolved.length})</h2>
+      <p class="muted small">These references from the request matched no loan account, or matched more than one. They are kept here and are not tested until Compliance resolves them.</p>
+      <table><thead><tr><th>Reference as written</th><th>Status</th><th>Detail</th></tr></thead><tbody>${unresolved.map((u) => `<tr><td class="mono">${esc(u.ref)}</td><td><span class="badge b-${u.status === "ambiguous" ? "cannot_determine" : "gap"}">${esc(u.status)}</span></td><td class="small">${esc(u.note || "")}</td></tr>`).join("")}</tbody></table></div>` : ""}
+    <h2>Sampled accounts</h2><p class="muted small">Open an account to see every record involved on one timeline, with the events behind each finding highlighted.</p>
+    <div class="card no-print"><form id="af" class="row"><div style="flex:1;min-width:180px"><label>Loan account contains</label><input type="search" name="q" value="${esc(q.q || "")}" placeholder="CNF123456789"></div>
       <label style="align-self:flex-end;font-weight:400"><input type="checkbox" name="gaps" value="1" style="width:auto" ${only ? "checked" : ""}> Only accounts with gaps</label><div style="align-self:flex-end"><button class="primary">Search</button></div></form></div>
     <div class="card"><p class="muted small">${num(data.total)} account${data.total === 1 ? "" : "s"}</p>
-    <table><thead><tr><th>Account</th><th class="num">Gaps</th><th class="num">Cannot determine</th><th class="num">Evidenced</th><th>Questions with gaps</th></tr></thead><tbody>
-    ${data.rows.map((r) => `<tr class="click" data-acct="${esc(r.account_id)}"><td class="mono"><strong>${esc(r.account_id)}</strong></td><td class="num"><strong style="color:${+r.gaps ? "var(--gap)" : "inherit"}">${num(r.gaps)}</strong></td><td class="num">${num(r.cannot_determine)}</td><td class="num">${num(r.evidenced)}</td><td>${(r.gap_questions || []).map((x) => `<span class="tag">${esc(x)}</span>`).join(" ")}</td></tr>`).join("") || `<tr><td colspan="5" class="empty">No accounts match.</td></tr>`}
+    <table><thead><tr><th>Loan account</th><th class="num">Gaps</th><th class="num">Cannot determine</th><th class="num">Evidenced</th><th>Questions with gaps</th></tr></thead><tbody>
+    ${data.rows.map((r) => `<tr class="click" data-acct="${esc(r.account_id)}"><td class="mono"><strong>${esc(r.account_number || r.account_id)}</strong><div class="small muted">CN id ${esc(r.account_id)}</div></td><td class="num"><strong style="color:${+r.gaps ? "var(--gap)" : "inherit"}">${num(r.gaps)}</strong></td><td class="num">${num(r.cannot_determine)}</td><td class="num">${num(r.evidenced)}</td><td>${(r.gap_questions || []).map((x) => `<span class="tag">${esc(x)}</span>`).join(" ")}</td></tr>`).join("") || `<tr><td colspan="5" class="empty">No accounts match.</td></tr>`}
     </tbody></table><div class="pager">${page > 0 ? `<a class="btn" href="${link({ page: page - 1 })}">&larr; Previous</a>` : ""}${(page + 1) * size < data.total ? `<a class="btn" href="${link({ page: page + 1 })}">Next &rarr;</a>` : ""}</div></div>`;
   el.querySelectorAll("tr[data-acct]").forEach((tr) => tr.addEventListener("click", () => (location.hash = `#/run/${runId}/account/${encodeURIComponent(tr.dataset.acct)}`)));
   el.querySelector("#af").addEventListener("submit", (ev) => {
@@ -538,7 +552,7 @@ async function accountFile(el, d, runId, scale, account) {
       <div class="small muted">${esc(e.source)} · ${esc(e.detail)} · <button class="link small" data-table="${t}" data-rec="${esc(e.id)}">${esc(e.id)}</button></div></div>`;
   }).join("");
   el.innerHTML = `<p class="small no-print"><a href="#/run/${runId}/accounts">&larr; All accounts</a></p>
-    <h2>Account <span class="mono">${esc(account)}</span></h2>
+    <h2>Loan account <span class="mono">${esc(a.account_number || account)}</span> <span class="small muted">· CN id ${esc(account)}${a.institution_code ? ` · ${esc(a.institution_code)}` : ""}</span></h2>
     <div class="card"><h3 style="margin-top:0">Result by check</h3><div class="row">${d.checks.map((c) => { const r = byCheck[c.check_id]; return `<div class="stat" style="min-width:150px"><div class="small muted">${esc(c.check_id)} · ${esc(c.title)}</div><div style="margin-top:4px">${r ? badge(r.status) : `<span class="muted small">no result</span>`}</div></div>`; }).join("")}</div></div>
     <div class="grid cols2" style="grid-template-columns:1.1fr 1fr;align-items:start">
       <div class="card"><h3 style="margin-top:0">Timeline (all times in UTC; source time shown beside it)</h3>${a.events.length ? `<div class="tl">${tl}</div>` : `<div class="empty">No records for this account in any source.</div>`}
@@ -621,7 +635,7 @@ async function rulesPage(el, standalone, runId, done) {
   const [r, src] = await Promise.all([api("/api/rules"), api("/api/data-sources")]);
   const pol = {}; r.policy.forEach((p) => (pol[p.rule_key] ||= []).push(p));
   const lim = (keys) => (keys || []).map((k) => pol[k] ? `${esc(k.replace(/_/g, " "))}: ` + pol[k].map((p) => `<strong>${esc(p.rule_value)}</strong> ${esc(p.unit || "")} <span class="muted">(${p.effective_to ? `${fdate(p.effective_from)} to ${fdate(p.effective_to)}` : `from ${fdate(p.effective_from)}`})</span>`).join(", ") : "").filter(Boolean).join("<br>");
-  el.innerHTML = `${standalone ? `<h1>Rules &amp; data</h1><p class="muted">How results are decided, the limits in force, the interpretations the platform applies, and what data it reads. Use this to defend a result to the lender.</p>` : ""}
+  el.innerHTML = `${standalone ? `<h1>Rules &amp; data ${help("data")}</h1><p class="muted">How results are decided, the limits in force, the interpretations the platform applies, and what data it reads. Use this to defend a result to the lender.</p>` : ""}
     <div class="card"><h2>How to read a result</h2><table><tbody>${Object.entries(r.status_meaning).map(([k, v]) => `<tr><td style="width:170px">${badge(k)}</td><td>${esc(v)}</td></tr>`).join("")}</tbody></table></div>
     <div class="card"><h2>What each check tests</h2><table><thead><tr><th>Check</th><th>Passes when</th><th>Gap when</th><th>Limits in force (D12)</th><th>Sources</th></tr></thead><tbody>
       ${Object.entries(r.checks).filter(([k]) => k !== "other").map(([k, i]) => `<tr><td><strong>${esc(i.title)}</strong><div class="small muted mono">${esc(k)}</div></td><td>${esc(i.tests)}</td><td>${esc(i.gap)}${i.unknown && !/^None|^n\/a/.test(i.unknown) ? `<div class="small muted">Cannot determine: ${esc(i.unknown)}</div>` : ""}</td><td class="small">${lim(i.limits) || "—"}</td><td class="small">${(i.sources || []).map(esc).join(", ")}</td></tr>`).join("")}</tbody></table></div>
@@ -700,7 +714,7 @@ const SAMPLE_CIRCULAR = `1. Calling hours: collection calls to borrowers may be 
 
 async function kbPage() {
   const docs = await api("/api/kb");
-  app.innerHTML = `<h1>Knowledge base</h1>
+  app.innerHTML = `<h1>Knowledge base ${help("guardrails")}</h1>
     <p class="muted">The circulars, policies and SOPs that guardrails come from. Upload one, split it into clauses, and turn each testable obligation into a guardrail linked to its clause.</p>
     <div class="card"><h2>Documents</h2>
       ${docs.length ? `<table><thead><tr><th>Document</th><th>Type</th><th>Reference</th><th>Effective</th><th class="num">Clauses</th><th class="num">Guardrails</th></tr></thead><tbody>
@@ -754,7 +768,7 @@ async function guardrailsPage(q) {
   const [list, docs] = await Promise.all([api("/api/guardrails"), api("/api/kb")]);
   const tab = q.show || "all";
   const shown = list.filter((g) => tab === "all" || g.status === tab);
-  app.innerHTML = `<div class="row between"><div><h1>Guardrails</h1>
+  app.innerHTML = `<div class="row between"><div><h1>Guardrails ${help("guardrails")}</h1>
       <p class="muted">What the audit tests, how serious a failure is, and how reviewers should order their work. Each change is a new version; an audit records the version it applied.</p></div>
       <button class="primary" id="newg">New guardrail</button></div>
     <div class="card"><div class="grid cols3" style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px">
@@ -810,6 +824,18 @@ async function guardrailForm(g, docs) {
     try { await post(g ? `/api/guardrails/${g.guardrail_id}/versions` : "/api/guardrails", body); m.hidden = true; route(); }
     catch (e) { document.getElementById("gerr").innerHTML = `<span class="badge b-failed">${esc(e.message)}</span>`; }
   });
+}
+
+
+/* ---------- guide ---------- */
+function guidePage(topic) {
+  const t = GUIDE.find((x) => x.id === topic) || GUIDE[0];
+  try { localStorage.setItem("seenGuide", "1"); } catch (_) {}
+  app.innerHTML = `<div class="guide"><nav class="toc no-print">${GUIDE.map((x) => `<a href="#/guide/${x.id}" class="${x.id === t.id ? "active" : ""}">${esc(x.title)}</a>`).join("")}</nav>
+    <div class="doc">${t.html}
+      <div class="row between no-print" style="margin-top:22px;padding-top:12px;border-top:1px solid var(--border)">
+        ${GUIDE.indexOf(t) > 0 ? `<a href="#/guide/${GUIDE[GUIDE.indexOf(t) - 1].id}">&larr; ${esc(GUIDE[GUIDE.indexOf(t) - 1].title)}</a>` : "<span></span>"}
+        ${GUIDE.indexOf(t) < GUIDE.length - 1 ? `<a href="#/guide/${GUIDE[GUIDE.indexOf(t) + 1].id}">${esc(GUIDE[GUIDE.indexOf(t) + 1].title)} &rarr;</a>` : "<span></span>"}</div></div></div>`;
 }
 
 /* ================= boot ================= */

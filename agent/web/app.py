@@ -371,13 +371,14 @@ def findings(run_id: UUID, check_id: str | None = None, question: str | None = N
         where.append("COALESCE(r.disposition, 'open') = %s")
         params.append(disposition)
     if account:
-        where.append("f.account_id ILIKE %s")
-        params.append(f"%{account.strip()}%")
+        where.append("(f.account_id ILIKE %s OR a.account_number ILIKE %s)")
+        params += [f"%{account.strip()}%"] * 2
     clause = " AND ".join(where)
-    base = f"FROM audit.findings f JOIN audit.checks c USING (run_id, check_id) {_LATEST_REVIEW} WHERE {clause}"
+    base = (f"FROM audit.findings f JOIN audit.checks c USING (run_id, check_id) LEFT JOIN staging.accounts a ON a.account_id = f.account_id "
+            f"{_LATEST_REVIEW} WHERE {clause}")
     total = _one(f"SELECT count(*) AS n {base}", tuple(params))["n"]
     rows = _all(f"""
-        SELECT f.finding_id, f.check_id, c.question_ref, c.check_type, f.account_id, f.subject_ref, f.status, f.severity,
+        SELECT f.finding_id, f.check_id, c.question_ref, c.check_type, f.account_id, a.account_number, f.subject_ref, f.status, f.severity,
                f.reason, f.evidence_query, COALESCE(r.disposition, 'open') AS disposition, r.review_comment, r.reviewer, r.reviewed_at,
                COALESCE((c.test_definition->>'priority_weight')::int, 1) AS priority_weight,
                COALESCE((SELECT jsonb_agg(to_jsonb(ci) - 'finding_id' ORDER BY ci.citation_id)
@@ -446,18 +447,21 @@ def accounts(run_id: UUID, q: str = "", only_gaps: bool = False, limit: int = 10
     _run_or_404(run_id)
     having = "HAVING count(f.*) FILTER (WHERE f.status = 'gap') > 0" if only_gaps else ""
     rows = _all(f"""
-        SELECT s.account_id, count(f.*) FILTER (WHERE f.status = 'gap') AS gaps,
+        SELECT s.account_id, s.account_number, count(f.*) FILTER (WHERE f.status = 'gap') AS gaps,
                count(f.*) FILTER (WHERE f.status = 'cannot_determine') AS cannot_determine,
                count(f.*) FILTER (WHERE f.status = 'evidenced') AS evidenced,
                COALESCE(array_agg(DISTINCT c.question_ref ORDER BY c.question_ref) FILTER (WHERE f.status = 'gap'), '{{}}') AS gap_questions
-        FROM (SELECT DISTINCT account_id FROM audit.sample_accounts WHERE run_id = %s AND account_id ILIKE %s) s
+        FROM (SELECT DISTINCT sa.account_id, a.account_number FROM audit.sample_accounts sa LEFT JOIN staging.accounts a ON a.account_id = sa.account_id
+              WHERE sa.run_id = %s AND (sa.account_id ILIKE %s OR a.account_number ILIKE %s)) s
         LEFT JOIN audit.findings f ON f.run_id = %s AND f.account_id = s.account_id
         LEFT JOIN audit.checks c ON c.run_id = f.run_id AND c.check_id = f.check_id
-        GROUP BY s.account_id {having} ORDER BY gaps DESC, s.account_id LIMIT %s OFFSET %s""",
-                (run_id, f"%{q.strip()}%", run_id, max(1, min(limit, 500)), max(0, offset)))
-    total = _one(f"""SELECT count(*) AS n FROM (SELECT s.account_id FROM (SELECT DISTINCT account_id FROM audit.sample_accounts
-                     WHERE run_id = %s AND account_id ILIKE %s) s LEFT JOIN audit.findings f ON f.run_id = %s AND f.account_id = s.account_id
-                     GROUP BY s.account_id {having}) t""", (run_id, f"%{q.strip()}%", run_id))["n"]
+        GROUP BY s.account_id, s.account_number {having} ORDER BY gaps DESC, s.account_id LIMIT %s OFFSET %s""",
+                (run_id, f"%{q.strip()}%", f"%{q.strip()}%", run_id, max(1, min(limit, 500)), max(0, offset)))
+    total = _one(f"""SELECT count(*) AS n FROM (SELECT s.account_id FROM (SELECT DISTINCT sa.account_id, a.account_number FROM audit.sample_accounts sa
+                     LEFT JOIN staging.accounts a ON a.account_id = sa.account_id
+                     WHERE sa.run_id = %s AND (sa.account_id ILIKE %s OR a.account_number ILIKE %s)) s
+                     LEFT JOIN audit.findings f ON f.run_id = %s AND f.account_id = s.account_id
+                     GROUP BY s.account_id {having}) t""", (run_id, f"%{q.strip()}%", f"%{q.strip()}%", run_id))["n"]
     return {"total": total, "rows": rows}
 
 
@@ -516,7 +520,9 @@ def account_file(run_id: UUID, account_id: str) -> dict:
         e["flag"] = flag.get(e["id"])
         e["ts"] = e["ts"].isoformat() if hasattr(e["ts"], "isoformat") else str(e["ts"])
     events.sort(key=lambda e: (e["ts"], e["id"]))
-    return {"account_id": account_id, "findings": fs, "events": events}
+    acct = _one("SELECT account_number, institution_code FROM staging.accounts WHERE account_id = %s", (account_id,)) or {}
+    return {"account_id": account_id, "account_number": acct.get("account_number"), "institution_code": acct.get("institution_code"),
+            "findings": fs, "events": events}
 
 
 # ---------------------------------------------------------------- response letter
