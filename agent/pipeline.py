@@ -6,7 +6,7 @@ from uuid import UUID
 
 from agent import store
 from agent.checks import REGISTRY
-from agent.contracts import Request
+from agent.contracts import CheckSpec, Request
 from agent.db import read_rows
 from agent.parser.request_parser import extract_sample_accounts, parse_checks
 from agent.tools import clear_caches
@@ -19,12 +19,15 @@ def random_accounts(n: int) -> list[str]:
 
 
 def process(run_id: UUID, request: Request, accounts: list[str] | None = None, random_n: int | None = None,
-            log: Callable[[str], None] = print) -> None:
+            log: Callable[[str], None] = print, checks: list[CheckSpec] | None = None,
+            scale: list[str] | None = None) -> None:
     """Run every check for an already-started run. Marks the run completed or failed; never raises
     past the run record, but re-raises so a caller can show the error."""
     try:
         clear_caches()
-        checks, scale = parse_checks(request)
+        if checks is None:  # no reviewed interpretation supplied: let the parser read the request
+            checks, scale = parse_checks(request)
+        scale = scale or []
         request.severity_scale = scale
         store.set_severity_scale(run_id, scale)
         sample = accounts or extract_sample_accounts(request.text)

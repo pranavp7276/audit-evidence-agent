@@ -1,10 +1,23 @@
 "use strict";
 const app = document.getElementById("app");
-const state = { poll: null, config: {} };
+const state = { poll: null, config: {}, rules: null };
 
+/* ================= helpers ================= */
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const num = (n) => Number(n || 0).toLocaleString();
 const when = (s) => (s ? new Date(s).toLocaleString() : "");
+const fdate = (s) => (s ? new Date(String(s).slice(0, 10) + "T00:00:00").toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "");
+const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+const duration = (a, b) => {
+  if (!a || !b) return "";
+  const s = Math.max(0, Math.round((new Date(b) - new Date(a)) / 1000));
+  return s >= 3600 ? `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min` : s >= 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s} s`;
+};
+const STATUS_LABEL = { evidenced: "Evidenced", gap: "Gap", cannot_determine: "Cannot determine" };
+const DISP_LABEL = { open: "Open", confirmed: "Confirmed", disputed: "Disputed", remediation_planned: "Remediation planned", evidence_obtained: "Evidence obtained" };
+const DISP_FOR = { gap: ["open", "confirmed", "disputed", "remediation_planned"], cannot_determine: ["open", "evidence_obtained"] };
+const SOURCE_TABLE = { contact: "raw.d4_contact_log", call: "raw.d4_contact_log", whatsapp: "raw.d4_contact_log", sms: "raw.d4_contact_log", consent: "raw.d5",
+  verification: "raw.d11", recording: "raw.d10", notice: "raw.notice_dispatch" };
 
 async function api(path, opts) {
   const r = await fetch(path, opts);
@@ -15,10 +28,20 @@ async function api(path, opts) {
   }
   return (r.headers.get("content-type") || "").includes("json") ? r.json() : r;
 }
+const post = (path, body) => api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
-function badge(status) {
-  return `<span class="badge b-${esc(status)}">${esc(String(status).replace("_", " "))}</span>`;
+const reviewer = () => { try { return localStorage.getItem("reviewer") || ""; } catch (_) { return ""; } };
+function setReviewer(v) { try { localStorage.setItem("reviewer", v); } catch (_) {} renderWho(); }
+function renderWho() { document.getElementById("who").textContent = reviewer() ? `Signed in as ${reviewer()}` : "Set your name"; }
+function needName() {
+  if (reviewer()) return reviewer();
+  const n = (window.prompt("Your name (recorded on every review and letter change):") || "").trim();
+  if (n) setReviewer(n);
+  return n;
 }
+
+const badge = (status) => `<span class="badge b-${esc(status)}">${esc(STATUS_LABEL[status] || String(status).replace(/_/g, " "))}</span>`;
+const dispBadge = (d) => `<span class="badge b-${esc(d)}">${esc(DISP_LABEL[d] || d)}</span>`;
 function sevBadge(label, scale) {
   if (!label) return "";
   const i = Math.min(Math.max(scale.indexOf(label), 0), 3);
@@ -26,19 +49,18 @@ function sevBadge(label, scale) {
 }
 function stackBar(e, g, u) {
   const t = (e + g + u) || 1;
-  return `<div class="bar" title="${e} evidenced, ${g} gap, ${u} cannot determine">
-    <span class="e" style="width:${(e / t) * 100}%"></span><span class="g" style="width:${(g / t) * 100}%"></span><span class="u" style="width:${(u / t) * 100}%"></span></div>`;
+  return `<div class="bar" title="${e} evidenced, ${g} gap, ${u} cannot determine"><span class="e" style="width:${(e / t) * 100}%"></span><span class="g" style="width:${(g / t) * 100}%"></span><span class="u" style="width:${(u / t) * 100}%"></span></div>`;
 }
-function stat(n, label, cls = "") { return `<div class="stat ${cls}"><div class="n">${num(n)}</div><div class="l">${esc(label)}</div></div>`; }
+const stat = (n, label, cls = "") => `<div class="stat ${cls}"><div class="n">${num(n)}</div><div class="l">${esc(label)}</div></div>`;
+const info = (type) => (state.rules && state.rules.checks[type]) || { title: type, tests: "", sources: [] };
 
-/* ---------- tiny markdown renderer (headings, lists, tables, bold/italic/code) ---------- */
 function inline(s) {
   return esc(s).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/_([^_]+)_/g, "<em>$1</em>").replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1");
+    .replace(/(^|[\s(])_([^_]+)_(?=[\s).,;]|$)/g, "$1<em>$2</em>").replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1");
 }
 function markdown(md) {
   const out = []; let list = false, table = [];
-  const flushTable = () => {
+  const flush = () => {
     if (!table.length) return;
     const rows = table.filter((r) => !/^\|\s*-/.test(r)).map((r) => r.replace(/^\||\|$/g, "").split("|").map((c) => c.trim()));
     out.push("<table><thead><tr>" + rows[0].map((c) => `<th>${inline(c)}</th>`).join("") + "</tr></thead><tbody>" +
@@ -47,18 +69,22 @@ function markdown(md) {
   };
   for (const line of md.split("\n")) {
     if (line.startsWith("|")) { table.push(line); continue; }
-    flushTable();
+    flush();
     if (/^- /.test(line)) { if (!list) { out.push("<ul>"); list = true; } out.push(`<li>${inline(line.slice(2))}</li>`); continue; }
     if (list) { out.push("</ul>"); list = false; }
     const h = line.match(/^(#{1,3}) (.*)/);
     if (h) out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`);
     else if (line.trim()) out.push(`<p>${inline(line)}</p>`);
   }
-  flushTable(); if (list) out.push("</ul>");
+  flush(); if (list) out.push("</ul>");
   return out.join("\n");
 }
+function download(name, text, type = "text/plain") {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click();
+}
 
-/* ---------- routing ---------- */
+/* ================= routing ================= */
 function stopPolling() { if (state.poll) { clearInterval(state.poll); state.poll = null; } }
 function parseHash() {
   const [path, query = ""] = location.hash.slice(1).split("?");
@@ -67,105 +93,192 @@ function parseHash() {
 async function route() {
   stopPolling();
   const { parts, q } = parseHash();
-  const section = parts[0] === "sql" ? "sql" : "runs";
+  const section = parts[0] === "new" ? "new" : parts[0] === "rules" ? "rules" : "runs";
   document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === section));
   try {
-    if (parts[0] === "sql") await sqlPage();
-    else if (parts[0] === "run" && parts[1]) await runPage(parts[1], parts[2] || "overview", q);
+    if (parts[0] === "new") await newRequestPage();
+    else if (parts[0] === "rules") await rulesPage(app, true);
+    else if (parts[0] === "sql") await sqlPage();
+    else if (parts[0] === "run" && parts[1]) await workspace(parts[1], parts[2] || "summary", parts[3], q);
     else await homePage();
   } catch (e) {
-    app.innerHTML = `<div class="err">${esc(e.message)}</div><p><a href="#/">Back to audit runs</a></p>`;
+    app.innerHTML = `<div class="err">${esc(e.message)}</div><p><a href="#/">Back to audit requests</a></p>`;
   }
   window.scrollTo(0, 0);
 }
 window.addEventListener("hashchange", route);
 
-/* ---------- home: new run + history ---------- */
+/* ================= home ================= */
 async function homePage() {
-  const [runs, examples] = await Promise.all([api("/api/runs"), api("/api/examples")]);
+  const runs = await api("/api/runs");
+  const today = new Date().toISOString().slice(0, 10);
   app.innerHTML = `
-    <h1>Audit runs</h1>
-    <p class="muted">Upload an audit request. The agent splits it into checks, tests the evidence for each sampled account, and returns a cited evidence pack, a gap report and a draft response.</p>
+    <div class="row between"><div><h1>Audit requests</h1>
+      <p class="muted">Each audit request from a lender or regulator becomes an engagement: the platform tests the evidence for every sampled account, and you review the gaps, follow up what could not be proven, and release the response.</p></div>
+      <a class="btn primary big" href="#/new">New audit request</a></div>
     <div class="card">
-      <h2>New audit run</h2>
-      <form id="new-run">
-        <div class="grid cols2">
-          <div><label for="rid">Request id</label><input id="rid" type="text" value="CO-04" required></div>
-          <div><label for="file">Request file (PDF, .eml or text)</label><input id="file" type="file" accept=".pdf,.eml,.txt,.md"></div>
-        </div>
-        <div style="margin-top:12px">
-          <div class="row between"><label for="text">…or paste the request text</label>
-            ${examples.length ? `<span class="small muted">Example: ${examples.map((n) => `<button type="button" class="link" data-example="${esc(n)}">${esc(n)}</button>`).join(" · ")}</span>` : ""}</div>
-          <textarea id="text" placeholder="Q1. ... Q2. ...&#10;Severity scale ...&#10;Sampled accounts: ..."></textarea>
-        </div>
-        <details><summary>Sample options (only if the request does not list its accounts)</summary>
-          <div class="grid cols2">
-            <div><label for="accts">Account ids (comma separated)</label><input id="accts" type="text" placeholder="ACC00001, ACC00002"></div>
-            <div><label for="rn">…or a random sample of</label><input id="rn" type="number" min="1" max="2000" placeholder="300"></div>
-          </div>
-        </details>
-        <div class="row" style="margin-top:14px"><button class="primary" id="start">Run audit</button><span id="form-err"></span></div>
-      </form>
-    </div>
-    <div class="card">
-      <h2>History</h2>
-      ${runs.length ? `<table><thead><tr><th>Request</th><th>Status</th><th class="num">Accounts</th><th class="num">Checks</th><th>Results</th><th class="num">Gaps</th><th>Started</th></tr></thead><tbody>
-        ${runs.map((r) => `<tr class="click" data-run="${r.run_id}"><td><strong>${esc(r.request_id)}</strong><div class="small muted mono">${r.run_id.slice(0, 8)}</div></td>
-          <td>${badge(r.status)}</td><td class="num">${num(r.accounts)}</td><td class="num">${num(r.checks)}</td>
-          <td>${stackBar(+r.evidenced, +r.gaps, +r.cannot_determine)}</td><td class="num">${num(r.gaps)}</td><td class="small">${when(r.started_at)}</td></tr>`).join("")}
-        </tbody></table>` : `<div class="empty">No runs yet. Start one above.</div>`}
+      ${runs.length ? `<table><thead><tr><th>Request</th><th>Status</th><th>Response due</th><th class="num">Accounts</th><th>Results</th><th class="num">Gaps reviewed</th><th>Letter</th></tr></thead><tbody>
+        ${runs.map((r) => {
+          const overdue = r.response_due && String(r.response_due).slice(0, 10) < today && r.letter_status !== "approved";
+          return `<tr class="click" data-run="${r.run_id}"><td><strong>${esc(r.request_id)}</strong><div class="small muted">${esc(r.lender || "")}</div><div class="small muted">${when(r.started_at)}</div></td>
+          <td>${badge(r.status)}</td><td class="small">${r.response_due ? fdate(r.response_due) : "—"}${overdue ? ` <span class="badge b-failed">overdue</span>` : ""}</td>
+          <td class="num">${num(r.accounts)}</td><td style="min-width:150px">${stackBar(+r.evidenced, +r.gaps, +r.cannot_determine)}<div class="small muted">${num(r.gaps)} gaps · ${num(r.cannot_determine)} to follow up</div></td>
+          <td class="num">${num(r.gaps_reviewed)} / ${num(r.gaps)}</td><td>${r.letter_status ? `<span class="badge b-${r.letter_status}">${esc(r.letter_status.replace("_", " "))}</span>` : `<span class="muted small">not started</span>`}</td></tr>`;
+        }).join("")}</tbody></table>` : `<div class="empty"><p>No audit requests yet.</p><a class="btn primary" href="#/new">Start your first audit request</a></div>`}
     </div>`;
   app.querySelectorAll("tr[data-run]").forEach((tr) => tr.addEventListener("click", () => (location.hash = `#/run/${tr.dataset.run}`)));
+}
+
+/* ================= new request: upload, confirm interpretation, run ================= */
+const draft = { form: {}, preview: null };
+
+async function newRequestPage() {
+  const examples = await api("/api/examples");
+  const f = draft.form;
+  app.innerHTML = `
+    <h1>New audit request</h1>
+    <div class="steps"><span class="${draft.preview ? "done" : "on"}">1. Upload the request</span><span class="${draft.preview ? "on" : ""}">2. Confirm how it is read</span><span>3. Run and review</span></div>
+    <div class="card"><form id="intake">
+      <div class="grid cols2">
+        <div><label for="rid">Request reference</label><input id="rid" type="text" value="${esc(f.rid || "CO-04")}" required></div>
+        <div><label for="lender">Requested by (lender or regulator)</label><input id="lender" type="text" value="${esc(f.lender || "")}" placeholder="e.g. Example Lender Ltd"></div>
+        <div><label for="due">Response due</label><input id="due" type="date" value="${esc(f.due || "")}"></div>
+        <div><label for="file">Request document (PDF, .eml or text)</label><input id="file" type="file" accept=".pdf,.eml,.txt,.md"></div>
+      </div>
+      <div style="margin-top:12px"><div class="row between"><label for="text">…or paste the request text</label>
+        ${examples.length ? `<span class="small muted">Try an example: ${examples.map((n) => `<button type="button" class="link" data-example="${esc(n)}">${esc(n)}</button>`).join(" · ")}</span>` : ""}</div>
+        <textarea id="text" placeholder="Paste the questions, the severity scale and the list of sampled accounts here.">${esc(f.text || "")}</textarea></div>
+      <details><summary>The request does not list its sampled accounts?</summary><div class="grid cols2">
+        <div><label for="accts">Account ids (comma separated)</label><input id="accts" type="text" value="${esc(f.accts || "")}" placeholder="ACC00001, ACC00002"></div>
+        <div><label for="rn">…or draw a random sample of</label><input id="rn" type="number" min="1" max="2000" value="${esc(f.rn || "")}" placeholder="300"></div></div></details>
+      <div class="row" style="margin-top:14px"><button class="primary big" id="read">Read the request</button><span id="intake-err"></span></div>
+    </form></div>
+    <div id="confirm"></div>`;
   app.querySelectorAll("[data-example]").forEach((b) => b.addEventListener("click", async () => {
     const ex = await api("/api/examples/" + encodeURIComponent(b.dataset.example));
     document.getElementById("text").value = ex.text;
     document.getElementById("rid").value = ex.name.replace(/\.[^.]+$/, "");
   }));
-  document.getElementById("new-run").addEventListener("submit", async (ev) => {
+  document.getElementById("intake").addEventListener("submit", async (ev) => {
     ev.preventDefault();
+    const btn = document.getElementById("read"); btn.disabled = true; btn.textContent = "Reading…";
     const fd = new FormData();
     fd.append("request_id", document.getElementById("rid").value);
     fd.append("text", document.getElementById("text").value);
-    fd.append("accounts", document.getElementById("accts").value);
-    if (document.getElementById("rn").value) fd.append("random_n", document.getElementById("rn").value);
-    const f = document.getElementById("file").files[0];
-    if (f) fd.append("file", f);
-    const btn = document.getElementById("start"); btn.disabled = true; btn.textContent = "Starting…";
+    const file = document.getElementById("file").files[0];
+    if (file) fd.append("file", file);
+    draft.form = { rid: document.getElementById("rid").value, lender: document.getElementById("lender").value, due: document.getElementById("due").value,
+      text: document.getElementById("text").value, accts: document.getElementById("accts").value, rn: document.getElementById("rn").value };
     try {
-      const r = await api("/api/runs", { method: "POST", body: fd });
-      location.hash = `#/run/${r.run_id}`;
+      draft.preview = await api("/api/requests/preview", { method: "POST", body: fd });
+      draft.form.text = draft.preview.text; // the extracted text (also for PDFs)
+      renderConfirm();
     } catch (e) {
-      document.getElementById("form-err").innerHTML = `<span class="badge b-failed">${esc(e.message)}</span>`;
-      btn.disabled = false; btn.textContent = "Run audit";
+      document.getElementById("intake-err").innerHTML = `<span class="badge b-failed">${esc(e.message)}</span>`;
     }
+    btn.disabled = false; btn.textContent = "Read the request";
   });
+  if (draft.preview) renderConfirm();
 }
 
-/* ---------- run page ---------- */
-const TABS = [["overview", "Overview"], ["findings", "Findings"], ["gaps", "Gap report"], ["letter", "Response letter"], ["pack", "Evidence pack"], ["score", "Score"]];
+function checkOptions(sel) {
+  return Object.entries(state.config.check_types || {}).map(([k, t]) => `<option value="${k}" ${k === sel ? "selected" : ""}>${esc(t)}</option>`).join("");
+}
+function renderConfirm() {
+  const p = draft.preview, el = document.getElementById("confirm");
+  const questions = new Set(p.checks.map((c) => c.question_ref)).size;
+  const noSample = !p.accounts && !draft.form.accts && !draft.form.rn;
+  el.innerHTML = `
+    <div class="card"><h2>Confirm how the request is read</h2>
+      <p class="muted">${questions} question(s) became ${p.checks.length} check(s)${p.parser === "keyword" ? " using the keyword reader (no AI key is configured), so please check each row" : " by the AI reader; please check each row"}.
+        Questions can be vague or bundle several tests: change the test, set the severity from the request's scale, or split a bundled question. A question that fits no test is reported as <em>unanswered</em>, never dropped.</p>
+      <table class="wiz"><thead><tr><th>Check</th><th>Question as written</th><th>Test applied</th><th>Severity</th><th></th></tr></thead><tbody>
+      ${p.checks.map((c, i) => `<tr data-i="${i}"><td><input type="text" data-f="check_id" value="${esc(c.check_id)}" style="width:70px"><div class="small muted">${esc(c.question_ref)}</div></td>
+        <td>${esc(c.question_text)}</td>
+        <td><select data-f="check_type">${checkOptions(c.check_type)}</select><div class="exp" data-exp>${esc(info(c.check_type).tests)}</div></td>
+        <td><select data-f="severity"><option value="">(none given)</option>${p.scale.map((s) => `<option ${s === c.severity ? "selected" : ""}>${esc(s)}</option>`).join("")}</select></td>
+        <td><button type="button" class="link" data-split="${i}" title="Add another check for the same question">Split</button>${p.checks.filter((x) => x.question_ref === c.question_ref).length > 1 ? ` · <button type="button" class="link" data-del="${i}">Remove</button>` : ""}</td></tr>`).join("")}
+      </tbody></table>
+      <div class="small muted" style="margin-top:8px">Severity scale found in the request: ${p.scale.length ? p.scale.map(esc).join(" › ") : "none"}. Gaps with no severity are graded at the most severe level.</div>
+    </div>
+    <div class="card"><h2>Sample</h2>
+      ${p.accounts ? `<p><strong>${num(p.accounts)}</strong> accounts are listed in the request.</p>` : `<div class="note">The request lists no accounts. Provide them above (account ids or a random sample size).</div>`}
+      ${p.unknown_count ? `<div class="note"><strong>${num(p.unknown_count)} sampled account(s) have no records in the contact log</strong> (${p.unknown_accounts.slice(0, 8).map(esc).join(", ")}${p.unknown_count > 8 ? ", …" : ""}). They will be reported as <em>cannot determine</em>; check the account ids before running.</div>` : p.accounts ? `<p class="muted small">Every sampled account has records in the data.</p>` : ""}
+    </div>
+    <div class="row"><button class="primary big" id="run" ${noSample ? "disabled" : ""}>Run audit</button><span class="muted small">A 300-account, 10-question request normally completes in a couple of minutes.</span><span id="run-err"></span></div>`;
+  const sync = () => el.querySelectorAll("tr[data-i]").forEach((tr) => {
+    const c = p.checks[+tr.dataset.i];
+    tr.querySelectorAll("[data-f]").forEach((inp) => (c[inp.dataset.f] = inp.value || null));
+  });
+  el.querySelectorAll("tr[data-i] [data-f]").forEach((inp) => inp.addEventListener("change", () => {
+    sync();
+    if (inp.dataset.f === "check_type") inp.closest("tr").querySelector("[data-exp]").textContent = info(inp.value).tests;
+  }));
+  el.querySelectorAll("[data-split]").forEach((b) => b.addEventListener("click", () => {
+    sync();
+    const i = +b.dataset.split, c = p.checks[i], same = p.checks.filter((x) => x.question_ref === c.question_ref);
+    if (c.check_id === c.question_ref) c.check_id = c.question_ref + "a";
+    const next = c.question_ref + String.fromCharCode(97 + same.length);
+    p.checks.splice(i + 1, 0, { ...c, check_id: next, check_type: "other" });
+    renderConfirm();
+  }));
+  el.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", () => {
+    sync();
+    const ref = p.checks[+b.dataset.del].question_ref;
+    p.checks.splice(+b.dataset.del, 1);
+    const left = p.checks.filter((x) => x.question_ref === ref);
+    if (left.length === 1 && left[0].check_id === ref + "a") left[0].check_id = ref; // no longer split
+    renderConfirm();
+  }));
+  document.getElementById("run").addEventListener("click", async () => {
+    sync();
+    const ids = p.checks.map((c) => c.check_id.trim());
+    if (new Set(ids).size !== ids.length || ids.some((x) => !x)) { document.getElementById("run-err").innerHTML = `<span class="badge b-failed">Each check needs its own id</span>`; return; }
+    const who = needName(); if (!who) return;
+    const fd = new FormData(), f = draft.form;
+    fd.append("request_id", f.rid); fd.append("lender", f.lender || ""); fd.append("response_due", f.due || ""); fd.append("created_by", who);
+    fd.append("text", p.text); fd.append("source", p.source); fd.append("accounts", f.accts || "");
+    if (f.rn) fd.append("random_n", f.rn);
+    fd.append("checks", JSON.stringify(p.checks.map((c) => ({ ...c, check_id: c.check_id.trim() })))); fd.append("scale", JSON.stringify(p.scale));
+    const btn = document.getElementById("run"); btn.disabled = true; btn.textContent = "Starting…";
+    try {
+      const r = await api("/api/runs", { method: "POST", body: fd });
+      draft.preview = null; draft.form = {};
+      location.hash = `#/run/${r.run_id}`;
+    } catch (e) { document.getElementById("run-err").innerHTML = `<span class="badge b-failed">${esc(e.message)}</span>`; btn.disabled = false; btn.textContent = "Run audit"; }
+  });
+  el.scrollIntoView({ behavior: "smooth" });
+}
 
-async function runPage(runId, tab, q) {
+/* ================= engagement workspace ================= */
+const TABS = [["summary", "Summary"], ["questions", "Questions"], ["gaps", "Gap register"], ["followup", "Follow-up"], ["accounts", "Accounts"], ["letter", "Response letter"], ["pack", "Evidence pack"], ["rules", "Rules & data"]];
+
+async function workspace(runId, tab, sub, q) {
   const d = await api(`/api/runs/${runId}`);
-  const { run, checks } = d;
-  const scale = run.severity_scale || [];
-  const done = run.status !== "running";
-  const header = `
-    <p class="small"><a href="#/">&larr; All runs</a></p>
+  const { run } = d, scale = run.severity_scale || [];
+  const done = run.status === "completed";
+  const activeTab = tab === "account" ? "accounts" : tab;
+  const slaMin = state.config.sla_minutes || 120;
+  app.innerHTML = `
+    <p class="small no-print"><a href="#/">&larr; All audit requests</a></p>
     <div class="row between"><div><h1>${esc(run.request_id)} ${badge(run.status)}</h1>
-      <div class="muted small">Run <span class="mono">${run.run_id}</span> · started ${when(run.started_at)}${run.finished_at ? ` · finished ${when(run.finished_at)}` : ""} · ${esc(run.request_source)} request</div></div></div>
-    ${run.status === "failed" ? `<div class="err"><strong>The run failed.</strong> ${esc(run.notes || "")}</div>` : ""}
-    ${run.status === "running" ? `<div class="card"><strong>Testing evidence…</strong> <span class="muted small">${d.tested_checks} of ${checks.length || "?"} checks done</span>
-      <div class="progress"><span style="width:${checks.length ? (d.tested_checks / checks.length) * 100 : 5}%"></span></div></div>` : ""}
-    <div class="tabs">${TABS.map(([k, l]) => `<a href="#/run/${runId}/${k}" class="${k === tab ? "active" : ""}">${l}</a>`).join("")}</div>
+      <div class="muted small">${run.lender ? `Requested by <strong>${esc(run.lender)}</strong> · ` : ""}${run.response_due ? `response due ${fdate(run.response_due)} · ` : ""}started ${when(run.started_at)}${run.finished_at ? ` · tested in ${duration(run.started_at, run.finished_at)} (target: under ${slaMin / 60} hours)` : ""}${run.created_by ? ` · by ${esc(run.created_by)}` : ""}</div></div></div>
+    ${run.status === "failed" ? `<div class="err"><strong>The audit could not be completed.</strong> ${esc(run.notes || "")}</div>` : ""}
+    ${run.status === "running" ? `<div class="card"><strong>Testing evidence…</strong> <span class="muted small">${d.tested_checks} of ${d.checks.length || "?"} checks done</span><div class="progress"><span style="width:${d.checks.length ? (d.tested_checks / d.checks.length) * 100 : 5}%"></span></div></div>` : ""}
+    <div class="tabs no-print">${TABS.map(([k, l]) => `<a href="#/run/${runId}/${k}" class="${k === activeTab ? "active" : ""}">${l}${k === "gaps" && d.totals.gap ? ` <span class="tag">${num(d.totals.gap)}</span>` : ""}${k === "followup" && d.totals.cannot_determine ? ` <span class="tag">${num(d.totals.cannot_determine)}</span>` : ""}</a>`).join("")}</div>
     <div id="tab"></div>`;
-  app.innerHTML = header;
   const el = document.getElementById("tab");
-  if (tab === "overview") overview(el, d, runId, scale);
-  else if (tab === "findings") await findingsTab(el, d, runId, scale, q, false);
-  else if (tab === "gaps") await findingsTab(el, d, runId, scale, q, true);
-  else if (tab === "letter") await letterTab(el, runId, done);
-  else if (tab === "pack") await packTab(el, runId, done);
-  else if (tab === "score") scoreTab(el, runId, done);
+  const needDone = (fn) => (done ? fn() : (el.innerHTML = `<div class="note">This section is available once the audit has completed.</div>`));
+  if (tab === "summary") summary(el, d, runId, scale);
+  else if (tab === "questions" && sub) await findingsPage(el, d, runId, scale, { mode: "question", fixed: { question: sub }, base: `#/run/${runId}/questions/${encodeURIComponent(sub)}`, q, title: `Question ${sub}` });
+  else if (tab === "questions") await needDone(() => questionsTab(el, d, runId, scale));
+  else if (tab === "gaps") await findingsPage(el, d, runId, scale, { mode: "gaps", fixed: { status: "gap" }, base: `#/run/${runId}/gaps`, q });
+  else if (tab === "followup") await findingsPage(el, d, runId, scale, { mode: "followup", fixed: { status: "cannot_determine" }, base: `#/run/${runId}/followup`, q });
+  else if (tab === "accounts") await accountsTab(el, d, runId, q);
+  else if (tab === "account") await accountFile(el, d, runId, scale, decodeURIComponent(sub || ""));
+  else if (tab === "letter") await needDone(() => letterTab(el, d, runId));
+  else if (tab === "pack") await needDone(() => packTab(el, d, runId));
+  else if (tab === "rules") await rulesPage(el, false, runId, done);
   if (run.status === "running") {
     state.poll = setInterval(async () => {
       const n = await api(`/api/runs/${runId}`).catch(() => null);
@@ -174,258 +287,366 @@ async function runPage(runId, tab, q) {
   }
 }
 
-function overview(el, d, runId, scale) {
-  const { checks, totals, severity } = d;
-  const maxSev = Math.max(1, ...severity.map((s) => +s.findings));
+/* ---------- summary ---------- */
+function summary(el, d, runId, scale) {
+  const { checks, totals, severity, coverage, collectors, months, review, letter } = d;
+  const gaps = +totals.gap, sampled = coverage.sampled;
+  const crit = severity[0];
+  const rv = (status, disp) => review.filter((r) => r.status === status && (disp === undefined || r.disposition === disp)).reduce((a, r) => a + +r.n, 0);
+  const gapsTotal = rv("gap"), gapsOpen = rv("gap", "open"), cndTotal = rv("cannot_determine"), cndOpen = rv("cannot_determine", "open");
+  const verdictCls = !gaps ? "good" : crit && scale.length && crit.severity === scale[0] ? "bad" : "warn";
+  const maxM = Math.max(1, ...months.map((m) => +m.gaps));
+  const step = (done, partial, title, sub, link) => `<li class="${done ? "done" : partial ? "partial" : ""}"><span class="dot">${done ? "&#10003;" : ""}</span><div class="t"><strong>${title}</strong><div class="s">${sub}</div></div>${link ? `<a class="btn no-print" href="${link}">Open</a>` : ""}</li>`;
   el.innerHTML = `
-    <div class="grid cols4">${stat(checks.length, "checks from the request")}${stat(totals.evidenced, "evidenced", "ok")}${stat(totals.gap, "gap findings", "gap")}${stat(totals.cannot_determine, "cannot determine", "unk")}</div>
+    ${d.run.status === "running" ? "" : `<div class="banner ${verdictCls}"><div class="big">${gaps ? `${num(gaps)} gap${gaps === 1 ? "" : "s"} found across ${num(totals.accounts_with_gaps)} of ${num(sampled)} sampled accounts` : `No gaps found in ${num(sampled)} sampled accounts`}</div>
+      <div class="muted">${severity.map((s) => `${num(s.findings)} ${esc(s.severity)}`).join(" · ")}${totals.cannot_determine ? `${gaps ? " · " : ""}${num(totals.cannot_determine)} items could not be determined and need follow-up` : ""}. Nothing is claimed as compliant without a cited record.</div></div>`}
+    ${coverage.no_data.length ? `<div class="note"><strong>Sample coverage:</strong> ${coverage.no_data.length} sampled account(s) have no records in the contact log (${coverage.no_data.slice(0, 6).map(esc).join(", ")}${coverage.no_data.length > 6 ? ", …" : ""}). Check the sample before responding.</div>` : ""}
+    <div class="grid cols4">${stat(d.questions, "questions in the request")}${stat(totals.evidenced, "evidenced results", "ok")}${stat(gaps, "gap findings", "gap")}${stat(totals.cannot_determine, "cannot determine", "unk")}</div>
     <div class="grid cols2" style="margin-top:14px">
+      <div class="card"><h2>Your next steps</h2><ul class="todo">
+        ${step(!coverage.no_data.length, false, "Check the sample", coverage.no_data.length ? `${coverage.no_data.length} sampled accounts have no records` : `All ${num(sampled)} sampled accounts have records`, "")}
+        ${step(gapsTotal > 0 && gapsOpen === 0 || !gapsTotal, gapsTotal > gapsOpen, "Review the gaps", gapsTotal ? `${num(gapsTotal - gapsOpen)} of ${num(gapsTotal)} reviewed` : "No gaps to review", gapsTotal ? `#/run/${runId}/gaps` : "")}
+        ${step(!cndTotal || cndOpen === 0, cndTotal > cndOpen, "Follow up what could not be determined", cndTotal ? `${num(cndTotal - cndOpen)} of ${num(cndTotal)} followed up` : "Nothing to follow up", cndTotal ? `#/run/${runId}/followup` : "")}
+        ${step(d.responses >= d.questions && d.questions > 0, d.responses > 0, "Add management comments", `${d.responses} of ${d.questions} questions have a comment`, `#/run/${runId}/questions`)}
+        ${step(letter && letter.status === "approved", !!letter, "Review and approve the response letter", letter ? `Version ${letter.version}: ${letter.status.replace("_", " ")}` : "Not started", `#/run/${runId}/letter`)}
+        ${step(false, false, "Release the evidence pack", "Download the zip once the letter is approved", `#/run/${runId}/pack`)}
+      </ul></div>
       <div class="card"><h2>Gaps by severity</h2>
-        ${severity.length ? severity.map((s, i) => `<div style="margin-bottom:12px"><div class="row between small"><span>${sevBadge(s.severity, scale)}</span><span><strong>${num(s.findings)}</strong> findings · ${num(s.accounts)} accounts</span></div>
-          <div class="hbar"><span style="width:${(s.findings / maxSev) * 100}%;background:var(--sev-${Math.min(scale.indexOf(s.severity), 2) < 0 ? 2 : Math.min(scale.indexOf(s.severity), 2)})"></span></div></div>`).join("") : `<div class="empty">${d.run.status === "running" ? "Waiting for results…" : "No gaps found."}</div>`}
-        <div class="small muted">Severity scale as given in the request: ${scale.length ? scale.map(esc).join(" › ") : "none given (gaps are graded at the most severe level)"}.</div></div>
-      <div class="card"><h2>Accounts with gaps</h2><div class="stat gap" style="border:0;padding:0"><div class="n">${num(totals.accounts_with_gaps)}</div></div>
-        <p class="muted small">Accounts with at least one gap, across all checks. Gaps are reported exactly as found; none are merged or softened.</p>
-        <a class="btn" href="#/run/${runId}/gaps">Open gap report</a></div>
+        ${severity.length ? severity.map((s) => { const i = Math.max(0, Math.min(scale.indexOf(s.severity), 2)); const mx = Math.max(...severity.map((x) => +x.findings)); return `<div style="margin-bottom:12px"><div class="row between small"><span>${sevBadge(s.severity, scale)}</span><span><strong>${num(s.findings)}</strong> findings · ${num(s.accounts)} accounts</span></div><div class="hbar"><span style="width:${(s.findings / mx) * 100}%;background:var(--sev-${i})"></span></div></div>`; }).join("") : `<div class="empty">No gaps.</div>`}
+        <div class="small muted">Severity scale from the request: ${scale.length ? scale.map(esc).join(" › ") : "none given"}.</div></div>
     </div>
-    <div class="card"><h2>Checks</h2>
-      <table><thead><tr><th>Check</th><th>Question</th><th>Type</th><th class="num">Accounts</th><th>Result</th><th class="num">Gaps</th></tr></thead><tbody>
-      ${checks.map((c) => `<tr class="click" data-check="${esc(c.check_id)}"><td><strong>${esc(c.check_id)}</strong></td>
-        <td>${esc(c.question_text)}<div class="small muted">Sources: ${(c.sources || []).map(esc).join(", ") || "none"}${c.test_definition && c.test_definition.severity ? ` · ${esc(c.test_definition.severity)}` : ""}</div></td>
-        <td><span class="tag">${esc(c.check_type)}</span>${c.check_type === "other" ? `<div class="small" style="color:var(--gap)">Not tested: reported as unanswered</div>` : ""}</td>
-        <td class="num">${num(c.accounts)}</td><td>${stackBar(+c.evidenced, +c.gap, +c.cannot_determine)}<div class="small muted">${num(c.evidenced)} ok · ${num(c.cannot_determine)} unknown</div></td>
-        <td class="num"><strong style="color:${+c.gap ? "var(--gap)" : "inherit"}">${num(c.gap)}</strong><div class="small muted">${num(c.accounts_with_gaps)} accts</div></td></tr>`).join("")}
-      </tbody></table>
-      <div class="small muted" style="margin-top:8px">Click a check to see its findings. <span class="badge b-evidenced">green</span> evidenced · <span class="badge b-gap">red</span> gap · <span class="badge b-cannot_determine">amber</span> cannot determine</div></div>`;
-  el.querySelectorAll("tr[data-check]").forEach((tr) => tr.addEventListener("click", () => (location.hash = `#/run/${runId}/findings?check=${encodeURIComponent(tr.dataset.check)}`)));
+    <div class="card"><h2>Results by question</h2>
+      <table><thead><tr><th>Check</th><th>Test</th><th class="num">Accounts</th><th>Result</th><th class="num">Compliant</th><th class="num">With gaps</th><th class="num">Cannot determine</th></tr></thead><tbody>
+      ${checks.map((c) => `<tr class="click" data-q="${esc(c.question_ref)}"><td><strong>${esc(c.check_id)}</strong></td><td>${esc(c.title)}<div class="small muted">${esc(c.question_text)}</div></td>
+        <td class="num">${num(c.accounts)}</td><td style="min-width:130px">${stackBar(+c.accounts_ok, +c.accounts_gap, +c.accounts_unknown)}</td>
+        <td class="num">${num(c.accounts_ok)} <span class="muted small">(${pct(+c.accounts_ok, +c.accounts_tested)}%)</span></td>
+        <td class="num"><strong style="color:${+c.accounts_gap ? "var(--gap)" : "inherit"}">${num(c.accounts_gap)}</strong></td><td class="num">${num(c.accounts_unknown)}</td></tr>`).join("")}
+      </tbody></table></div>
+    ${collectors.length || months.length ? `<div class="grid cols2">
+      <div class="card"><h2>Where the gaps concentrate: collectors</h2>
+        ${collectors.length ? `<table><thead><tr><th>Collector</th><th>Agency</th><th class="num">Gaps</th><th>Questions</th></tr></thead><tbody>${collectors.map((c) => `<tr><td class="mono">${esc(c.collector_id)}</td><td>${esc(c.agency || "")}</td><td class="num"><strong>${num(c.gaps)}</strong></td><td>${(c.questions || []).map((x) => `<span class="tag">${esc(x)}</span>`).join(" ")}</td></tr>`).join("")}</tbody></table>
+        <p class="small muted">Collectors behind the most gap findings on calls and messages. Use this to focus remediation.</p>` : `<div class="empty">No collector-level gaps.</div>`}</div>
+      <div class="card"><h2>When the gaps occurred</h2>
+        ${months.length ? `<div class="cols">${months.map((m) => `<div style="height:${(m.gaps / maxM) * 100}%" title="${esc(m.month)}: ${m.gaps} gaps"></div>`).join("")}</div><div class="cols-l">${months.map((m) => `<span>${esc(m.month.slice(5))}</span>`).join("")}</div>
+        <p class="small muted">Gap findings on calls and messages by month (UTC). Frequency, notice and some certificate gaps are not tied to a single message and are not shown.</p>` : `<div class="empty">No dated gaps.</div>`}</div></div>` : ""}
+    <div class="no-print"><button onclick="window.print()">Print summary / save as PDF</button></div>`;
+  el.querySelectorAll("tr[data-q]").forEach((tr) => tr.addEventListener("click", () => (location.hash = `#/run/${runId}/questions/${encodeURIComponent(tr.dataset.q)}`)));
 }
 
-/* ---------- findings / gap report ---------- */
-async function findingsTab(el, d, runId, scale, q, gapsOnly) {
-  const page = +(q.page || 0), size = 40;
-  const f = { check: q.check || "", status: gapsOnly ? "gap" : q.status || "", account: q.account || "", severity: q.severity || "" };
-  const params = new URLSearchParams({ limit: size, offset: page * size });
-  if (f.check) params.set("check_id", f.check);
-  if (f.status) params.set("status", f.status);
-  if (f.account) params.set("account", f.account);
-  if (f.severity) params.set("severity", f.severity);
-  const data = await api(`/api/runs/${runId}/findings?${params}`);
-  const base = `#/run/${runId}/${gapsOnly ? "gaps" : "findings"}`;
-  const link = (over) => base + "?" + new URLSearchParams(Object.fromEntries(Object.entries({ ...q, ...over }).filter(([, v]) => v !== "" && v != null))).toString();
-  el.innerHTML = `
-    <div class="card"><form id="flt" class="row">
-      <div><label>Check</label><select name="check"><option value="">All checks</option>${d.checks.map((c) => `<option value="${esc(c.check_id)}" ${c.check_id === f.check ? "selected" : ""}>${esc(c.check_id)} · ${esc(c.check_type)}</option>`).join("")}</select></div>
-      ${gapsOnly ? "" : `<div><label>Status</label><select name="status"><option value="">Any</option>${["gap", "evidenced", "cannot_determine"].map((s) => `<option value="${s}" ${s === f.status ? "selected" : ""}>${s.replace("_", " ")}</option>`).join("")}</select></div>`}
-      <div><label>Severity</label><select name="severity"><option value="">Any</option>${scale.map((s) => `<option ${s === f.severity ? "selected" : ""}>${esc(s)}</option>`).join("")}</select></div>
-      <div style="flex:1;min-width:160px"><label>Account contains</label><input type="search" name="account" value="${esc(f.account)}" placeholder="ACC00110"></div>
-      <div style="align-self:flex-end" class="row"><button class="primary">Filter</button>
-        ${gapsOnly && d.run.status === "completed" ? `<a class="btn" href="/api/runs/${runId}/gap_report.csv">Download CSV</a>` : ""}</div>
-    </form></div>
-    <p class="muted small">${num(data.total)} ${gapsOnly ? "gap" : ""} findings${data.total ? ` · showing ${page * size + 1}–${Math.min((page + 1) * size, data.total)}` : ""}. ${gapsOnly ? "Ordered by the request's severity scale, most severe first." : "Gaps first."}</p>
-    <div id="list">${data.rows.map(findingHtml(scale)).join("") || `<div class="empty">No findings match.</div>`}</div>
-    <div class="pager">${page > 0 ? `<a class="btn" href="${link({ page: page - 1 })}">&larr; Previous</a>` : ""}
-      ${(page + 1) * size < data.total ? `<a class="btn" href="${link({ page: page + 1 })}">Next &rarr;</a>` : ""}</div>`;
-  el.querySelector("#flt").addEventListener("submit", (ev) => {
-    ev.preventDefault();
-    const fd = Object.fromEntries(new FormData(ev.target).entries());
-    location.hash = base + "?" + new URLSearchParams(Object.entries(fd).filter(([, v]) => v)).toString();
-  });
-  el.querySelectorAll(".finding > .head").forEach((h) => h.addEventListener("click", () => {
-    const body = h.nextElementSibling; body.hidden = !body.hidden;
+/* ---------- questions ---------- */
+async function questionsTab(el, d, runId, scale) {
+  const resp = await api(`/api/runs/${runId}/responses`);
+  const groups = {};
+  d.checks.forEach((c) => (groups[c.question_ref] ||= []).push(c));
+  el.innerHTML = `<p class="muted">Each question as the platform read it, how it was tested, and the result. Add the management comment that will appear in the response letter.</p>` +
+    Object.entries(groups).map(([ref, cs]) => {
+      const r = resp[ref];
+      return `<div class="qcard"><div class="qh"><div class="row between"><div><strong>${esc(ref)}</strong> &nbsp;${esc(cs[0].question_text)}</div><a class="btn" href="#/run/${runId}/questions/${encodeURIComponent(ref)}">Open findings</a></div></div>
+        <div class="qb"><div>${cs.map((c) => {
+          const i = info(c.check_type);
+          return `<div class="interp"><b>${esc(c.check_id)} · ${esc(i.title)}</b>${c.test_definition && c.test_definition.severity ? ` &nbsp;${sevBadge(c.test_definition.severity, scale)}` : ""}<br>${esc(i.tests)}
+            <div class="small muted" style="margin-top:4px">Gap when: ${esc(i.gap)}<br>Sources: ${(i.sources || []).map(esc).join(", ") || "none"}</div></div>
+            <div style="margin:8px 0 14px">${c.check_type === "other" ? `<div class="note">Not testable by the platform: this question will be reported as unanswered and needs a manual response.</div>` : `${stackBar(+c.accounts_ok, +c.accounts_gap, +c.accounts_unknown)}<div class="small muted">${num(c.accounts_ok)} compliant · <strong style="color:var(--gap)">${num(c.accounts_gap)} with gaps</strong> · ${num(c.accounts_unknown)} cannot determine (of ${num(c.accounts)} sampled)</div>`}</div>`;
+        }).join("")}</div>
+        <div><label for="mc-${esc(ref)}">Management comment (goes into the letter)</label>
+          <textarea id="mc-${esc(ref)}" data-ref="${esc(ref)}" style="min-height:130px;font-family:inherit" placeholder="Explain root cause, remediation and timelines for the gaps in this question.">${esc(r ? r.body : "")}</textarea>
+          <div class="row" style="margin-top:8px"><button class="primary" data-save="${esc(ref)}">Save comment</button><span class="small muted" data-msg="${esc(ref)}">${r ? `Last saved by ${esc(r.author)} on ${when(r.created_at)}` : "Not yet written"}</span></div></div></div></div>`;
+    }).join("");
+  el.querySelectorAll("[data-save]").forEach((b) => b.addEventListener("click", async () => {
+    const ref = b.dataset.save, who = needName(); if (!who) return;
+    const msg = el.querySelector(`[data-msg="${ref}"]`);
+    try {
+      await api(`/api/runs/${runId}/responses/${encodeURIComponent(ref)}`, { method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: el.querySelector(`textarea[data-ref="${ref}"]`).value, author: who }) });
+      msg.textContent = `Saved by ${who} just now`;
+    } catch (e) { msg.innerHTML = `<span class="badge b-failed">${esc(e.message)}</span>`; }
   }));
-  el.querySelectorAll("[data-rec]").forEach((b) => b.addEventListener("click", (ev) => { ev.stopPropagation(); showRecord(b.dataset.table, b.dataset.rec); }));
 }
 
-const findingHtml = (scale) => (f) => `
-  <div class="finding"><div class="head">
-    ${badge(f.status)} ${sevBadge(f.severity, scale)}
-    <div class="reason"><div>${esc(f.reason)}</div>
-      <div class="small muted"><span class="mono">${esc(f.account_id)}</span> · ${esc(f.check_id)} (${esc(f.check_type)})${f.subject_ref ? ` · ${esc(f.subject_ref)}` : ""}</div></div>
-    <span class="tag">${f.citations.length} citation${f.citations.length === 1 ? "" : "s"}</span></div>
+/* ---------- findings (shared by questions, gap register, follow-up, account file) ---------- */
+function findingItem(f, scale, reviewable, selectable) {
+  const opts = DISP_FOR[f.status];
+  return `<div class="finding" data-id="${f.finding_id}"><div class="head">
+    ${selectable ? `<input type="checkbox" class="sel" data-id="${f.finding_id}" title="Select for a bulk decision" style="width:auto;margin-top:5px">` : ""}
+    ${badge(f.status)} ${sevBadge(f.severity, scale)} ${f.status !== "evidenced" ? dispBadge(f.disposition) : ""}
+    <div class="reason"><div>${esc(f.reason)}</div><div class="small muted"><a class="mono" href="#/run/${f.run_id}/account/${encodeURIComponent(f.account_id)}">${esc(f.account_id)}</a> · ${esc(f.check_id)} ${esc(info(f.check_type).title)}${f.subject_ref ? ` · ${esc(f.subject_ref)}` : ""}</div></div>
+    <span class="tag">${f.citations.length} record${f.citations.length === 1 ? "" : "s"}</span></div>
     <div class="body" hidden>
+      <div class="small"><strong>Test applied:</strong> ${esc(info(f.check_type).tests)}</div>
       ${f.citations.length ? f.citations.map(citeHtml).join("") : `<p class="muted small">No citation: this finding makes no claim either way.</p>`}
-      <p class="small muted" style="margin-bottom:0">Finding #${f.finding_id}${f.evidence_query ? ` · query: <span class="mono">${esc(f.evidence_query)}</span>` : ""}</p>
-    </div></div>`;
+      ${reviewable && opts ? `<div class="review no-print"><div class="small muted" style="margin-bottom:6px">${f.reviewer ? `Last decision: ${dispBadge(f.disposition)} by ${esc(f.reviewer)}${f.review_comment ? ` — “${esc(f.review_comment)}”` : ""}` : "Not reviewed yet."} A disputed gap is still reported.</div>
+        <div class="row"><select data-disp style="width:auto">${opts.map((o) => `<option value="${o}" ${o === f.disposition ? "selected" : ""}>${DISP_LABEL[o]}</option>`).join("")}</select>
+        <input type="text" data-comment placeholder="Comment (required to dispute or plan remediation)" style="flex:1;min-width:220px"><button data-savereview class="primary">Save decision</button></div></div>` : ""}
+      <p class="small muted" style="margin-bottom:0">Finding #${f.finding_id}${f.evidence_query ? ` · query: <span class="mono">${esc(f.evidence_query)}</span>` : ""}</p></div></div>`;
+}
 
 function citeHtml(c) {
   const ex = c.extract ? Object.entries(c.extract).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("") : "";
-  return `<div class="cite"><div class="meta"><span class="tag">${esc(c.role)}</span><strong>${esc(c.source_system)}</strong>
-    <span class="mono">${esc(c.source_table)} / ${esc(c.record_key)}</span>
+  return `<div class="cite"><div class="meta"><span class="tag">${esc(c.role)}</span><strong>${esc(c.source_system)}</strong><span class="mono">${esc(c.source_table)} / ${esc(c.record_key)}</span>
     <button class="link small" data-table="${esc(c.source_table)}" data-rec="${esc(c.record_key)}">View source record</button></div>
     <dl class="kv">${c.record_ts_utc ? `<dt>time (UTC)</dt><dd>${esc(c.record_ts_utc)}</dd>` : ""}${c.record_ts_original ? `<dt>as in source</dt><dd>${esc(c.record_ts_original)}</dd>` : ""}${ex}</dl></div>`;
 }
 
+function wireFindings(root, runId, onSaved) {
+  root.addEventListener("click", async (ev) => {
+    const head = ev.target.closest(".finding > .head");
+    const rec = ev.target.closest("[data-rec]");
+    const save = ev.target.closest("[data-savereview]");
+    if (rec) { ev.stopPropagation(); showRecord(rec.dataset.table, rec.dataset.rec); return; }
+    if (save) {
+      const item = save.closest(".finding"), who = needName(); if (!who) return;
+      try {
+        await post(`/api/runs/${runId}/reviews`, { finding_ids: [+item.dataset.id], disposition: item.querySelector("[data-disp]").value,
+          comment: item.querySelector("[data-comment]").value, reviewer: who });
+        onSaved();
+      } catch (e) { alert(e.message); }
+      return;
+    }
+    if (head && !ev.target.closest("input,select,a,button")) head.nextElementSibling.hidden = !head.nextElementSibling.hidden;
+  });
+}
+
+async function findingsPage(el, d, runId, scale, o) {
+  const q = o.q || {}, page = +(q.page || 0), size = 30, fixed = o.fixed || {};
+  const f = { question: fixed.question || q.question || "", severity: q.severity || "", disposition: q.disposition || "", account: q.account || "", status: fixed.status || q.status || "" };
+  const params = new URLSearchParams({ limit: size, offset: page * size });
+  if (f.question) params.set("question", f.question);
+  ["status", "severity", "disposition", "account"].forEach((k) => f[k] && params.set(k, f[k]));
+  const data = await api(`/api/runs/${runId}/findings?${params}`);
+  data.rows.forEach((r) => (r.run_id = runId));
+  const reviewable = d.run.status === "completed", selectable = reviewable && o.mode !== "question";
+  const questions = [...new Set(d.checks.map((c) => c.question_ref))];
+  const link = (over) => o.base + "?" + new URLSearchParams(Object.entries({ ...q, ...over }).filter(([, v]) => v !== "" && v != null)).toString();
+  const title = o.mode === "gaps" ? "Gap register" : o.mode === "followup" ? "Follow-up: what could not be determined" : o.title;
+  const blurb = o.mode === "gaps" ? "Every gap, most severe first. Open one to see the records it cites, then confirm it, dispute it with a reason, or record the remediation. A disputed gap is still reported."
+    : o.mode === "followup" ? "Items where the evidence was missing or ambiguous, so no claim is made. Obtain the evidence, then record it here; until then they stay open in the response."
+    : "All findings for this question, with the records they cite.";
+  el.innerHTML = `
+    ${o.mode === "question" ? `<p class="small"><a href="#/run/${runId}/questions">&larr; All questions</a></p>` : ""}
+    <h2>${esc(title)}</h2><p class="muted small">${blurb}</p>
+    <div class="card no-print"><form id="flt" class="row">
+      ${o.mode !== "question" ? `<div><label>Question</label><select name="question"><option value="">All</option>${questions.map((x) => `<option ${x === f.question ? "selected" : ""}>${esc(x)}</option>`).join("")}</select></div>` : `<div><label>Status</label><select name="status"><option value="">Any</option>${["gap", "evidenced", "cannot_determine"].map((s) => `<option value="${s}" ${s === f.status ? "selected" : ""}>${STATUS_LABEL[s]}</option>`).join("")}</select></div>`}
+      ${o.mode !== "followup" ? `<div><label>Severity</label><select name="severity"><option value="">Any</option>${scale.map((s) => `<option ${s === f.severity ? "selected" : ""}>${esc(s)}</option>`).join("")}</select></div>` : ""}
+      <div><label>Review status</label><select name="disposition"><option value="">Any</option>${Object.entries(DISP_LABEL).map(([k, v]) => `<option value="${k}" ${k === f.disposition ? "selected" : ""}>${v}</option>`).join("")}</select></div>
+      <div style="flex:1;min-width:150px"><label>Account contains</label><input type="search" name="account" value="${esc(f.account)}" placeholder="ACC00110"></div>
+      <div style="align-self:flex-end" class="row"><button class="primary">Filter</button>
+        ${o.mode === "gaps" && reviewable ? `<a class="btn" href="/api/runs/${runId}/files/gap_report.csv">Download CSV</a>` : o.mode === "followup" && reviewable ? `<a class="btn" href="/api/runs/${runId}/files/follow_up.csv">Download CSV</a>` : ""}</div></form></div>
+    <div id="bulk-host"></div>
+    <p class="muted small">${num(data.total)} finding${data.total === 1 ? "" : "s"}${data.total ? ` · showing ${page * size + 1}–${Math.min((page + 1) * size, data.total)}` : ""}</p>
+    ${selectable && data.rows.length ? `<label class="small no-print" style="font-weight:400"><input type="checkbox" id="all" style="width:auto"> Select all on this page</label>` : ""}
+    <div id="list">${data.rows.map((r) => findingItem(r, scale, reviewable, selectable)).join("") || `<div class="empty">No findings match.</div>`}</div>
+    <div class="pager no-print">${page > 0 ? `<a class="btn" href="${link({ page: page - 1 })}">&larr; Previous</a>` : ""}${(page + 1) * size < data.total ? `<a class="btn" href="${link({ page: page + 1 })}">Next &rarr;</a>` : ""}</div>`;
+  el.querySelector("#flt").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    location.hash = o.base + "?" + new URLSearchParams(Object.entries(Object.fromEntries(new FormData(ev.target).entries())).filter(([, v]) => v)).toString();
+  });
+  wireFindings(el.querySelector("#list"), runId, route);
+  if (selectable) {
+    const host = el.querySelector("#bulk-host"), sel = () => [...el.querySelectorAll(".sel:checked")].map((c) => +c.dataset.id);
+    const opts = o.mode === "followup" ? DISP_FOR.cannot_determine : DISP_FOR.gap;
+    const refresh = () => {
+      const ids = sel();
+      host.innerHTML = ids.length ? `<div class="bulk"><strong>${ids.length} selected</strong><select id="bd">${opts.map((x) => `<option value="${x}">${DISP_LABEL[x]}</option>`).join("")}</select>
+        <input type="text" id="bc" placeholder="Comment (required to dispute or plan remediation)"><button id="bs">Apply to selected</button></div>` : "";
+      const bs = host.querySelector("#bs");
+      if (bs) bs.onclick = async () => {
+        const who = needName(); if (!who) return;
+        try { await post(`/api/runs/${runId}/reviews`, { finding_ids: ids, disposition: host.querySelector("#bd").value, comment: host.querySelector("#bc").value, reviewer: who }); route(); }
+        catch (e) { alert(e.message); }
+      };
+    };
+    el.querySelectorAll(".sel").forEach((c) => c.addEventListener("change", refresh));
+    const all = el.querySelector("#all");
+    if (all) all.addEventListener("change", () => { el.querySelectorAll(".sel").forEach((c) => (c.checked = all.checked)); refresh(); });
+  }
+}
+
+/* ---------- accounts and the account file ---------- */
+async function accountsTab(el, d, runId, q) {
+  const page = +(q.page || 0), size = 50, only = q.gaps === "1";
+  const data = await api(`/api/runs/${runId}/accounts?${new URLSearchParams({ q: q.q || "", only_gaps: only, limit: size, offset: page * size })}`);
+  const link = (over) => `#/run/${runId}/accounts?` + new URLSearchParams(Object.entries({ ...q, ...over }).filter(([, v]) => v !== "" && v != null)).toString();
+  el.innerHTML = `<h2>Sampled accounts</h2><p class="muted small">Open an account to see every record involved on one timeline, with the events behind each finding highlighted.</p>
+    <div class="card no-print"><form id="af" class="row"><div style="flex:1;min-width:180px"><label>Account contains</label><input type="search" name="q" value="${esc(q.q || "")}" placeholder="ACC00110"></div>
+      <label style="align-self:flex-end;font-weight:400"><input type="checkbox" name="gaps" value="1" style="width:auto" ${only ? "checked" : ""}> Only accounts with gaps</label><div style="align-self:flex-end"><button class="primary">Search</button></div></form></div>
+    <div class="card"><p class="muted small">${num(data.total)} account${data.total === 1 ? "" : "s"}</p>
+    <table><thead><tr><th>Account</th><th class="num">Gaps</th><th class="num">Cannot determine</th><th class="num">Evidenced</th><th>Questions with gaps</th></tr></thead><tbody>
+    ${data.rows.map((r) => `<tr class="click" data-acct="${esc(r.account_id)}"><td class="mono"><strong>${esc(r.account_id)}</strong></td><td class="num"><strong style="color:${+r.gaps ? "var(--gap)" : "inherit"}">${num(r.gaps)}</strong></td><td class="num">${num(r.cannot_determine)}</td><td class="num">${num(r.evidenced)}</td><td>${(r.gap_questions || []).map((x) => `<span class="tag">${esc(x)}</span>`).join(" ")}</td></tr>`).join("") || `<tr><td colspan="5" class="empty">No accounts match.</td></tr>`}
+    </tbody></table><div class="pager">${page > 0 ? `<a class="btn" href="${link({ page: page - 1 })}">&larr; Previous</a>` : ""}${(page + 1) * size < data.total ? `<a class="btn" href="${link({ page: page + 1 })}">Next &rarr;</a>` : ""}</div></div>`;
+  el.querySelectorAll("tr[data-acct]").forEach((tr) => tr.addEventListener("click", () => (location.hash = `#/run/${runId}/account/${encodeURIComponent(tr.dataset.acct)}`)));
+  el.querySelector("#af").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const fd = new FormData(ev.target);
+    location.hash = `#/run/${runId}/accounts?` + new URLSearchParams([...fd.entries()].filter(([, v]) => v)).toString();
+  });
+}
+
+async function accountFile(el, d, runId, scale, account) {
+  const a = await api(`/api/runs/${runId}/accounts/${encodeURIComponent(account)}`);
+  a.findings.forEach((f) => (f.run_id = runId));
+  const reviewable = d.run.status === "completed";
+  const byCheck = {};
+  a.findings.forEach((f) => { const c = (byCheck[f.check_id] ||= { f, status: "evidenced", n: 0 }); c.n++; if (f.status === "gap") c.status = "gap"; else if (f.status === "cannot_determine" && c.status !== "gap") c.status = "cannot_determine"; });
+  let lastDay = "";
+  const tl = a.events.map((e) => {
+    const day = e.ts.slice(0, 10), head = day !== lastDay ? `<div class="day">${fdate(day)}</div>` : ""; lastDay = day;
+    const t = SOURCE_TABLE[e.kind];
+    return `${head}<div class="ev k-${esc(e.kind)} ${e.flag === "gap" ? "f-gap" : e.flag === "cannot_determine" ? "f-cannot_determine" : ""}">
+      <div class="t"><strong>${esc(e.title)}</strong>${e.flag ? badge(e.flag) : ""}<span class="time">${e.all_day ? "date only" : e.ts.slice(11, 19) + " UTC"}</span><span class="small muted">source: ${esc(e.src_ts)} ${e.tz === "date" ? "" : `(${esc(e.tz)})`}</span></div>
+      <div class="small muted">${esc(e.source)} · ${esc(e.detail)} · <button class="link small" data-table="${t}" data-rec="${esc(e.id)}">${esc(e.id)}</button></div></div>`;
+  }).join("");
+  el.innerHTML = `<p class="small no-print"><a href="#/run/${runId}/accounts">&larr; All accounts</a></p>
+    <h2>Account <span class="mono">${esc(account)}</span></h2>
+    <div class="card"><h3 style="margin-top:0">Result by check</h3><div class="row">${d.checks.map((c) => { const r = byCheck[c.check_id]; return `<div class="stat" style="min-width:150px"><div class="small muted">${esc(c.check_id)} · ${esc(c.title)}</div><div style="margin-top:4px">${r ? badge(r.status) : `<span class="muted small">no result</span>`}</div></div>`; }).join("")}</div></div>
+    <div class="grid cols2" style="grid-template-columns:1.1fr 1fr;align-items:start">
+      <div class="card"><h3 style="margin-top:0">Timeline (all times in UTC; source time shown beside it)</h3>${a.events.length ? `<div class="tl">${tl}</div>` : `<div class="empty">No records for this account in any source.</div>`}
+        <p class="small muted">Highlighted events are cited by a finding: red for a gap, amber for cannot determine.</p></div>
+      <div><h3 style="margin-top:0">Findings</h3><div id="list">${a.findings.map((f) => findingItem(f, scale, reviewable, false)).join("") || `<div class="empty">No findings for this account.</div>`}</div></div></div>`;
+  wireFindings(el, runId, route);
+}
+
+/* ---------- response letter ---------- */
+async function letterTab(el, d, runId) {
+  const L = await api(`/api/runs/${runId}/letter`);
+  let loaded = L.body;
+  el.innerHTML = `
+    <div class="banner ${L.status === "approved" ? "good" : "warn"}"><div class="row between"><div><strong>Response letter</strong> ${L.saved ? `<span class="badge b-${L.status}">${esc(L.status.replace("_", " "))}</span> <span class="muted small">version ${L.version} by ${esc(L.author)} on ${when(L.created_at)}</span>` : `<span class="badge b-draft">generated draft, not yet saved</span>`}</div>
+      <div class="small muted">Draft → In compliance review → Approved. Approval needs every management comment written.</div></div></div>
+    <div class="card no-print"><div class="row">
+      <button class="primary" id="save-draft">Save draft</button><button id="to-review">Send for compliance review</button><button id="approve">Approve</button>
+      <button id="regen" title="Rebuild from the latest findings, reviews and management comments">Regenerate from findings</button><button id="dl">Download .md</button><button id="pr">Print / save as PDF</button>
+      ${L.versions.length ? `<select id="ver" style="width:auto"><option value="">Version history…</option>${L.versions.map((v) => `<option value="${v.version}">v${v.version} · ${esc(v.status.replace("_", " "))} · ${esc(v.author)}</option>`).join("")}</select>` : ""}
+      <span id="lmsg" class="small"></span></div>
+      <div id="ph" class="note" style="margin-top:10px" hidden></div></div>
+    <div class="letter"><div class="no-print"><label>Edit</label><textarea id="ed" spellcheck="true"></textarea></div><div><label class="no-print">Preview</label><div class="card md" id="pv" style="max-height:none"></div></div></div>`;
+  const ed = el.querySelector("#ed"), pv = el.querySelector("#pv"), msg = el.querySelector("#lmsg"), ph = el.querySelector("#ph");
+  const paint = () => {
+    pv.innerHTML = markdown(ed.value);
+    const n = (ed.value.match(/\[To be completed[^\]]*\]/g) || []).length;
+    ph.hidden = !n; ph.innerHTML = n ? `${n} management comment(s) still marked <em>[To be completed by management]</em>. Add them on the <a href="#/run/${runId}/questions">Questions</a> tab, then regenerate.` : "";
+  };
+  ed.value = L.body; paint(); ed.addEventListener("input", paint);
+  const save = async (status) => {
+    const who = needName(); if (!who) return;
+    try { const r = await post(`/api/runs/${runId}/letter`, { body: ed.value, status, author: who }); msg.innerHTML = `<span class="badge b-completed">Saved as version ${r.version} (${status.replace("_", " ")})</span>`; setTimeout(route, 700); }
+    catch (e) { msg.innerHTML = `<span class="badge b-failed">${esc(e.message)}</span>`; }
+  };
+  el.querySelector("#save-draft").onclick = () => save("draft");
+  el.querySelector("#to-review").onclick = () => save("in_review");
+  el.querySelector("#approve").onclick = () => { if (confirm("Approve this letter? Further edits will start a new draft version.")) save("approved"); };
+  el.querySelector("#regen").onclick = async () => {
+    if (!confirm("Replace the text in the editor with a fresh draft built from the latest findings and comments? Unsaved edits will be lost.")) return;
+    ed.value = (await api(`/api/runs/${runId}/letter/generate`)).body; paint();
+  };
+  el.querySelector("#dl").onclick = () => download(`response_letter_${d.run.request_id}_${runId.slice(0, 8)}.md`, ed.value, "text/markdown");
+  el.querySelector("#pr").onclick = () => window.print();
+  const ver = el.querySelector("#ver");
+  if (ver) ver.onchange = async () => { if (!ver.value) return; const v = await api(`/api/runs/${runId}/letter/version/${ver.value}`); ed.value = v.body; paint(); msg.textContent = `Showing version ${v.version} in the editor (not saved)`; };
+}
+
+/* ---------- evidence pack ---------- */
+async function packTab(el, d, runId) {
+  const { markdown: md } = await api(`/api/runs/${runId}/index`);
+  const files = [["gap_report.csv", "Gap report: every gap graded by severity, with the records cited and the review decision"], ["follow_up.csv", "Items that could not be determined, to chase"],
+    ["reviews.csv", "Review trail: who decided what, and when"], ["response_letter.md", "The response letter (latest saved version)"], ["rules_and_assumptions.md", "What each check tests and the interpretations applied"], ["index.md", "Index of the pack"]];
+  const keys = await api("/api/gap-keys");
+  el.innerHTML = `<div class="card"><div class="row between"><div><h2 style="margin:0">Evidence pack</h2><p class="muted small" style="margin:4px 0 0">Everything an auditor needs to trace each statement to a record. The pack is rebuilt from the current state every time you download it.</p></div>
+    <a class="btn primary big" href="/api/runs/${runId}/pack.zip">Download full pack (.zip)</a></div>
+    <h3>Contents</h3><ul>${files.map(([n, t]) => `<li><a href="/api/runs/${runId}/files/${n}">${n}</a> <span class="muted small">— ${esc(t)}</span></li>`).join("")}<li><strong>extracts/&lt;check&gt;.csv</strong> <span class="muted small">— one row per finding with its citations and extracts, per check (in the zip)</span></li></ul></div>
+    <div class="card"><h2>Index</h2><div class="md">${markdown(md)}</div></div>
+    <details class="card no-print"><summary style="margin:0">Quality check: score this audit against a known gap key</summary>
+      <p class="muted small">If you hold the true gap list for this request, compare it to what the platform reported (target: recall ≥ 95%, false gaps &lt; 5%, no claims without a citation).</p>
+      <form id="sf" class="row">${keys.length ? `<div><label>Gap key on this server</label><select name="key_name"><option value="">Choose…</option>${keys.map((k) => `<option>${esc(k)}</option>`).join("")}</select></div>` : ""}
+        <div><label>…or upload one (CSV)</label><input type="file" name="file" accept=".csv"></div>
+        <div><label>Account column</label><input type="text" name="account_col" value="account_id" style="width:130px"></div><div><label>Question column</label><input type="text" name="check_col" value="question_ref" style="width:130px"></div>
+        <div style="align-self:flex-end"><button class="primary">Score</button></div></form><div id="sr"></div></details>`;
+  el.querySelector("#sf").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const out = el.querySelector("#sr"); out.innerHTML = `<p class="muted">Scoring…</p>`;
+    try {
+      const s = await api(`/api/runs/${runId}/score`, { method: "POST", body: new FormData(ev.target) });
+      const row = (l, v, ok, t) => `<tr><td>${l}</td><td class="num"><strong>${v}</strong></td><td><span class="badge ${ok ? "b-completed" : "b-failed"}">${ok ? "PASS" : "FAIL"}</span></td><td class="muted">${t}</td></tr>`;
+      const list = (t, a) => (a.length ? `<h3>${t} (${a.length})</h3><p class="mono small">${a.slice(0, 40).map((x) => esc(x.join(" · "))).join("<br>")}</p>` : "");
+      out.innerHTML = `<table style="margin-top:14px"><thead><tr><th>Measure</th><th class="num">Result</th><th></th><th>Target</th></tr></thead><tbody>
+        ${row("Gap recall", (s.recall * 100).toFixed(1) + `% (${s.matched}/${s.true_gaps})`, s.recall >= 0.95, "≥ 95%")}${row("False-gap rate", (s.false_gap_rate * 100).toFixed(1) + `% (${s.false_gaps.length}/${s.reported_gaps})`, s.false_gap_rate < 0.05, "< 5%")}
+        ${row("Claims without a citation", s.unsupported_claims, s.unsupported_claims === 0, "0")}</tbody></table>${list("Missed gaps", s.missed)}${list("False gaps", s.false_gaps)}`;
+    } catch (e) { out.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  });
+}
+
+/* ---------- rules and data ---------- */
+async function rulesPage(el, standalone, runId, done) {
+  const [r, src] = await Promise.all([api("/api/rules"), api("/api/data-sources")]);
+  const pol = Object.fromEntries(r.policy.map((p) => [p.policy_key, p]));
+  const lim = (keys) => (keys || []).map((k) => pol[k] ? `${esc(k.replace(/_/g, " "))}: <strong>${esc(pol[k].policy_value)}</strong> ${esc(pol[k].unit || "")}` : "").filter(Boolean).join("; ");
+  el.innerHTML = `${standalone ? `<h1>Rules &amp; data</h1><p class="muted">How results are decided, the limits in force, the interpretations the platform applies, and what data it reads. Use this to defend a result to the lender.</p>` : ""}
+    <div class="card"><h2>How to read a result</h2><table><tbody>${Object.entries(r.status_meaning).map(([k, v]) => `<tr><td style="width:170px">${badge(k)}</td><td>${esc(v)}</td></tr>`).join("")}</tbody></table></div>
+    <div class="card"><h2>What each check tests</h2><table><thead><tr><th>Check</th><th>Passes when</th><th>Gap when</th><th>Limits in force (D12)</th><th>Sources</th></tr></thead><tbody>
+      ${Object.entries(r.checks).filter(([k]) => k !== "other").map(([k, i]) => `<tr><td><strong>${esc(i.title)}</strong><div class="small muted mono">${esc(k)}</div></td><td>${esc(i.tests)}</td><td>${esc(i.gap)}${i.unknown && !/^None|^n\/a/.test(i.unknown) ? `<div class="small muted">Cannot determine: ${esc(i.unknown)}</div>` : ""}</td><td class="small">${lim(i.limits) || "—"}</td><td class="small">${(i.sources || []).map(esc).join(", ")}</td></tr>`).join("")}</tbody></table></div>
+    <div class="card"><h2>Assumptions applied</h2><ul>${r.assumptions.map((a) => `<li><strong>${esc(a.topic)}.</strong> ${esc(a.text)}</li>`).join("")}</ul>
+      <p class="small muted">These are the platform's current interpretations. If your engagement requires a different one, tell the platform owners before relying on the result.</p></div>
+    <div class="card"><h2>Data the platform reads</h2><table><thead><tr><th>Source</th><th class="num">Records</th><th>From</th><th>To</th><th>Source time zone</th></tr></thead><tbody>
+      ${src.map((s) => `<tr><td>${esc(s.source)}</td><td class="num">${num(s.rows)}</td><td class="small">${s.first ? esc(String(s.first).slice(0, 10)) : "—"}</td><td class="small">${s.last ? esc(String(s.last).slice(0, 10)) : "—"}</td><td class="small">${esc(s.timezone)}</td></tr>`).join("")}</tbody></table>
+      <p class="small muted">Every timestamp is compared in UTC; the original value is shown beside it wherever it is cited.</p></div>`;
+}
+
+/* ---------- source record viewer ---------- */
 async function showRecord(table, key) {
   const m = document.getElementById("modal");
-  m.hidden = false;
-  m.innerHTML = `<div class="box"><p class="muted">Loading…</p></div>`;
+  m.hidden = false; m.innerHTML = `<div class="box"><p class="muted">Loading…</p></div>`;
   m.onclick = (e) => { if (e.target === m) m.hidden = true; };
   try {
     const r = await api(`/api/record?table=${encodeURIComponent(table)}&key=${encodeURIComponent(key)}`);
     m.innerHTML = `<div class="box"><div class="row between"><h2 style="margin:0">Source record</h2><button id="close">Close</button></div>
       <p class="muted small mono">${esc(r.table)} · ${esc(r.key_column)} = ${esc(key)}</p>
       <dl class="kv">${Object.entries(r.record).map(([k, v]) => `<dt>${esc(k)}</dt><dd class="mono">${esc(v)}</dd>`).join("")}</dl>
-      <p class="small muted">Exactly as loaded into the raw layer (text, source time zone).</p></div>`;
-  } catch (e) {
-    m.innerHTML = `<div class="box"><div class="err">${esc(e.message)}</div><button id="close">Close</button></div>`;
-  }
+      <p class="small muted">Exactly as loaded from the source file (text, in the source's own time zone).</p></div>`;
+  } catch (e) { m.innerHTML = `<div class="box"><div class="err">${esc(e.message)}</div><button id="close">Close</button></div>`; }
   document.getElementById("close").onclick = () => (m.hidden = true);
 }
 
-/* ---------- letter ---------- */
-async function letterTab(el, runId, done) {
-  if (!done) { el.innerHTML = `<div class="note">The response letter is drafted once the run has completed.</div>`; return; }
-  const { markdown: md } = await api(`/api/runs/${runId}/letter`);
-  let saved = null; try { saved = localStorage.getItem("letter:" + runId); } catch (_) {}
-  const text = saved ?? md;
-  el.innerHTML = `
-    <div class="note">Draft for compliance review. Every figure comes from the recorded findings. Edits you make here stay in this browser; the stored findings never change.</div>
-    <div class="row" style="margin-bottom:10px"><button id="dl" class="primary">Download .md</button><button id="cp">Copy</button><button id="rs">Reset to generated draft</button><span id="msg" class="small muted"></span></div>
-    <div class="letter"><div><label>Edit</label><textarea id="ed" spellcheck="true"></textarea></div><div><label>Preview</label><div class="card md" id="pv"></div></div></div>`;
-  const ed = document.getElementById("ed"), pv = document.getElementById("pv");
-  ed.value = text; pv.innerHTML = markdown(text);
-  ed.addEventListener("input", () => { pv.innerHTML = markdown(ed.value); try { localStorage.setItem("letter:" + runId, ed.value); } catch (_) {} });
-  document.getElementById("dl").onclick = () => {
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([ed.value], { type: "text/markdown" })); a.download = `response_letter_${runId.slice(0, 8)}.md`; a.click();
-  };
-  document.getElementById("cp").onclick = async () => { await navigator.clipboard.writeText(ed.value); document.getElementById("msg").textContent = "Copied"; };
-  document.getElementById("rs").onclick = () => { ed.value = md; pv.innerHTML = markdown(md); try { localStorage.removeItem("letter:" + runId); } catch (_) {} };
-}
-
-/* ---------- pack ---------- */
-async function packTab(el, runId, done) {
-  if (!done) { el.innerHTML = `<div class="note">The evidence pack is built once the run has completed.</div>`; return; }
-  const { markdown: md } = await api(`/api/runs/${runId}/index`);
-  el.innerHTML = `<div class="card"><div class="row between"><h2 style="margin:0">Evidence pack</h2>
-      <div class="row"><a class="btn primary" href="/api/runs/${runId}/pack.zip">Download pack (.zip)</a><a class="btn" href="/api/runs/${runId}/gap_report.csv">Gap report (.csv)</a></div></div>
-    <p class="muted small">The zip holds the index, one extract per check (a row per finding with its citations), the gap report and the draft response letter.</p>
-    <div class="md">${markdown(md)}</div></div>`;
-}
-
-/* ---------- score ---------- */
-async function scoreTab(el, runId, done) {
-  if (!done) { el.innerHTML = `<div class="note">Score a run once it has completed.</div>`; return; }
-  const keys = await api("/api/gap-keys");
-  el.innerHTML = `<div class="card"><h2>Score against a gap key</h2>
-    <p class="muted small">Compares the gaps this run reported with the true gaps at (account, question) level. Target: recall ≥ 95%, false gaps &lt; 5%, no claims without a citation.</p>
-    <form id="sf" class="row">
-      ${keys.length ? `<div><label>Gap key on this server</label><select name="key_name"><option value="">Choose…</option>${keys.map((k) => `<option>${esc(k)}</option>`).join("")}</select></div>` : ""}
-      <div><label>…or upload a gap key (CSV)</label><input type="file" name="file" accept=".csv"></div>
-      <div><label>Account column</label><input type="text" name="account_col" value="account_id" style="width:130px"></div>
-      <div><label>Question column</label><input type="text" name="check_col" value="question_ref" style="width:130px"></div>
-      <div style="align-self:flex-end"><button class="primary">Score</button></div></form><div id="sr"></div></div>`;
-  document.getElementById("sf").addEventListener("submit", async (ev) => {
-    ev.preventDefault();
-    const out = document.getElementById("sr");
-    out.innerHTML = `<p class="muted">Scoring…</p>`;
-    try {
-      const s = await api(`/api/runs/${runId}/score`, { method: "POST", body: new FormData(ev.target) });
-      const row = (label, val, ok, target) => `<tr><td>${label}</td><td class="num"><strong>${val}</strong></td><td><span class="badge ${ok ? "b-completed" : "b-failed"}">${ok ? "PASS" : "FAIL"}</span></td><td class="muted">${target}</td></tr>`;
-      const list = (t, a) => (a.length ? `<h3>${t} (${a.length})</h3><p class="mono small">${a.slice(0, 40).map((x) => esc(x.join(" · "))).join("<br>")}${a.length > 40 ? "<br>…" : ""}</p>` : "");
-      out.innerHTML = `<table style="margin-top:14px"><thead><tr><th>Measure</th><th class="num">Result</th><th></th><th>Target</th></tr></thead><tbody>
-        ${row("Gap recall", (s.recall * 100).toFixed(1) + `% (${s.matched}/${s.true_gaps})`, s.recall >= 0.95, "≥ 95%")}
-        ${row("False-gap rate", (s.false_gap_rate * 100).toFixed(1) + `% (${s.false_gaps.length}/${s.reported_gaps})`, s.false_gap_rate < 0.05, "< 5%")}
-        ${row("Claims without a citation", s.unsupported_claims, s.unsupported_claims === 0, "0")}</tbody></table>${list("Missed gaps", s.missed)}${list("False gaps", s.false_gaps)}`;
-    } catch (e) { out.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
-  });
-}
-
-/* ---------- SQL query ---------- */
+/* ---------- advanced: data explorer ---------- */
 const SAMPLES = [
   ["Rows loaded per source", `SELECT 'D4 contact log' AS source, count(*) AS rows FROM staging.d4_contacts
 UNION ALL SELECT 'D5 consent', count(*) FROM staging.d5_consents
 UNION ALL SELECT 'D10 recordings', count(*) FROM staging.d10_recordings
 UNION ALL SELECT 'D11 verification', count(*) FROM staging.d11_verifications
-UNION ALL SELECT 'Notices', count(*) FROM staging.notices
-UNION ALL SELECT 'Collectors', count(*) FROM staging.collectors`],
-  ["Messages sent before consent (compared in UTC)", `SELECT c.account_id, c.contact_id, c.channel, c.contact_ts_utc AS message_utc,
-       min(s.consent_ts_utc) AS first_consent_utc
-FROM staging.d4_contacts c
-LEFT JOIN staging.d5_consents s ON s.account_id = c.account_id AND s.channel = c.channel
-WHERE c.channel IN ('whatsapp', 'sms')
-GROUP BY c.account_id, c.contact_id, c.channel, c.contact_ts_utc
-HAVING min(s.consent_ts_utc) IS NULL OR min(s.consent_ts_utc) >= c.contact_ts_utc
-ORDER BY c.contact_ts_utc
-LIMIT 50`],
-  ["Calls outside the D12 calling hours (IST)", `SELECT c.account_id, c.contact_id, c.contact_ts_src AS call_time_ist, c.collector_id
-FROM staging.d4_contacts c, staging.d12_policy s, staging.d12_policy e
-WHERE c.channel = 'call' AND s.policy_key = 'calling_hours_start' AND e.policy_key = 'calling_hours_end'
-  AND NOT ((c.contact_ts_utc AT TIME ZONE 'Asia/Kolkata')::time >= s.policy_value::time
-       AND (c.contact_ts_utc AT TIME ZONE 'Asia/Kolkata')::time <  e.policy_value::time)
-ORDER BY c.contact_ts_utc
-LIMIT 50`],
-  ["Account-days over the daily call limit", `SELECT account_id, (contact_ts_utc AT TIME ZONE 'Asia/Kolkata')::date AS day, count(*) AS calls
-FROM staging.d4_contacts, staging.d12_policy p
-WHERE channel = 'call' AND p.policy_key = 'max_calls_per_day'
-GROUP BY account_id, day, p.policy_value
-HAVING count(*) > p.policy_value::int
-ORDER BY calls DESC, day`],
-  ["Connected calls with no recording", `SELECT c.account_id, c.contact_id, c.contact_ts_src AS call_time_ist
-FROM staging.d4_contacts c
+UNION ALL SELECT 'Notices', count(*) FROM staging.notices`],
+  ["Messages sent before consent (UTC)", `SELECT c.account_id, c.contact_id, c.channel, c.contact_ts_utc AS message_utc, min(s.consent_ts_utc) AS first_consent_utc
+FROM staging.d4_contacts c LEFT JOIN staging.d5_consents s ON s.account_id = c.account_id AND s.channel = c.channel
+WHERE c.channel IN ('whatsapp', 'sms') GROUP BY c.account_id, c.contact_id, c.channel, c.contact_ts_utc
+HAVING min(s.consent_ts_utc) IS NULL OR min(s.consent_ts_utc) >= c.contact_ts_utc ORDER BY c.contact_ts_utc LIMIT 50`],
+  ["Connected calls with no recording", `SELECT c.account_id, c.contact_id, c.contact_ts_src AS call_time_ist FROM staging.d4_contacts c
 LEFT JOIN staging.d10_recordings r ON r.contact_id = c.contact_id
-WHERE c.channel = 'call' AND c.outcome = 'connected' AND r.recording_id IS NULL
-ORDER BY c.contact_ts_utc
-LIMIT 50`],
-  ["Calls by collectors with no valid certificate that day", `SELECT c.account_id, c.contact_id, c.collector_id,
-       (c.contact_ts_utc AT TIME ZONE 'Asia/Kolkata')::date AS call_date
-FROM staging.d4_contacts c
-WHERE c.channel = 'call' AND NOT EXISTS (
-  SELECT 1 FROM staging.certifications x WHERE x.collector_id = c.collector_id
-    AND (c.contact_ts_utc AT TIME ZONE 'Asia/Kolkata')::date BETWEEN x.valid_from AND x.valid_to)
-ORDER BY call_date
-LIMIT 50`],
-  ["Dues disclosed without prior verification", `SELECT c.account_id, c.contact_id, c.contact_ts_utc AS call_utc, v.verified_ts_utc, v.result
-FROM staging.d4_contacts c
-LEFT JOIN staging.d11_verifications v ON v.contact_id = c.contact_id
-WHERE c.outcome = 'connected' AND c.dues_disclosed
-  AND (v.verification_id IS NULL OR v.result <> 'passed' OR v.verified_ts_utc >= c.contact_ts_utc)
-ORDER BY c.contact_ts_utc
-LIMIT 50`],
+WHERE c.channel = 'call' AND c.outcome = 'connected' AND r.recording_id IS NULL ORDER BY c.contact_ts_utc LIMIT 50`],
 ];
-
 async function sqlPage() {
-  app.innerHTML = `<h1>SQL query</h1>
-    <p class="muted">Run a read-only SELECT against the data. Timestamps in the <span class="mono">staging</span> views are already UTC (<span class="mono">*_utc</span>). This is the same warehouse SQL tool the agent uses: read-only role, one statement, 30 s limit.</p>
-    <div class="card">
-      <div class="row between"><div style="flex:1;min-width:240px"><label for="samp">Sample queries</label>
-        <select id="samp">${SAMPLES.map(([n], i) => `<option value="${i}">${esc(n)}</option>`).join("")}</select></div>
-        <div class="row" style="align-self:flex-end"><button class="primary" id="go">Run query</button><span class="small muted">Ctrl+Enter</span></div></div>
-      <label for="q" style="margin-top:12px">Query</label><textarea id="q" spellcheck="false" style="min-height:190px"></textarea>
-      <p class="small muted" style="margin-bottom:0">Views: staging.d4_contacts · d5_consents · d10_recordings · d11_verifications · d12_policy · notices · holidays · collectors · certifications</p>
-    </div><div id="res"></div>`;
+  app.innerHTML = `<h1>Data explorer</h1><p class="muted">For analysts: run a read-only SELECT against the loaded data (staging views are in UTC). Same read-only warehouse tool the agent uses.</p>
+    <div class="card"><div class="row"><div style="flex:1;min-width:240px"><label for="samp">Sample queries</label><select id="samp">${SAMPLES.map(([n], i) => `<option value="${i}">${esc(n)}</option>`).join("")}</select></div>
+      <div style="align-self:flex-end"><button class="primary" id="go">Run query</button></div></div>
+      <label for="q" style="margin-top:12px">Query</label><textarea id="q" spellcheck="false" style="min-height:160px"></textarea></div><div id="res"></div>`;
   const q = document.getElementById("q"), samp = document.getElementById("samp");
-  const load = () => { q.value = SAMPLES[+samp.value][1]; };
   const run = async () => {
-    const res = document.getElementById("res");
-    res.innerHTML = `<div class="card muted">Running…</div>`;
-    const t0 = performance.now();
+    const res = document.getElementById("res"); res.innerHTML = `<div class="card muted">Running…</div>`;
     try {
-      const r = await api("/api/sql", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query: q.value }) });
-      const ms = Math.round(performance.now() - t0);
-      res.innerHTML = `<div class="card"><div class="row between"><div class="muted small">${num(r.rows.length)} row${r.rows.length === 1 ? "" : "s"}${r.truncated ? " (truncated)" : ""} · ${ms} ms</div>
-        ${r.rows.length ? `<button id="csv">Download CSV</button>` : ""}</div>
-        ${r.rows.length ? `<div style="overflow:auto;max-height:520px;margin-top:8px"><table><thead><tr>${r.columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>
-          ${r.rows.map((row) => `<tr>${row.map((v) => `<td class="${typeof v === "number" ? "num" : ""}">${esc(v)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>` : `<div class="empty">The query returned no rows.</div>`}</div>`;
-      const b = document.getElementById("csv");
-      if (b) b.onclick = () => {
-        const cell = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-        const csv = [r.columns, ...r.rows].map((row) => row.map(cell).join(",")).join("\n");
-        const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" })); a.download = "query_result.csv"; a.click();
-      };
+      const r = await post("/api/sql", { query: q.value });
+      res.innerHTML = `<div class="card"><div class="muted small">${num(r.rows.length)} rows${r.truncated ? " (truncated)" : ""}</div>${r.rows.length ? `<div style="overflow:auto;max-height:520px"><table><thead><tr>${r.columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${r.rows.map((row) => `<tr>${row.map((v) => `<td>${esc(v)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>` : `<div class="empty">No rows.</div>`}</div>`;
     } catch (e) { res.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
   };
-  samp.addEventListener("change", () => { load(); run(); });
-  document.getElementById("go").onclick = run;
-  q.addEventListener("keydown", (e) => { if (e.ctrlKey && e.key === "Enter") run(); });
-  load(); run();
+  samp.onchange = () => { q.value = SAMPLES[+samp.value][1]; run(); };
+  document.getElementById("go").onclick = run; q.value = SAMPLES[0][1]; run();
 }
 
-/* ---------- boot ---------- */
+/* ================= boot ================= */
 (async () => {
+  document.getElementById("who").addEventListener("click", () => {
+    const n = (window.prompt("Your name:", reviewer()) || "").trim();
+    if (n) setReviewer(n);
+  });
+  renderWho();
   try {
-    state.config = await api("/api/config");
-    document.getElementById("parser-badge").textContent = state.config.parser === "llm" ? `Parser: ${state.config.model}` : "Parser: keyword fallback (no API key)";
+    [state.config, state.rules] = await Promise.all([api("/api/config"), api("/api/rules")]);
+    document.getElementById("parser-badge").textContent = state.config.parser === "llm" ? `Request reader: ${state.config.model}` : "Request reader: keyword fallback (no AI key set)";
   } catch (_) {}
   route();
 })();

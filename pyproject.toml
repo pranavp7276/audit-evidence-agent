@@ -32,3 +32,8 @@ line-length = 130
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+"agent/web/rules.py" = ["E501"]  # plain-language text for auditors
+"agent/web/app.py" = ["E501"]  # long SQL and response builders
+"agent/pack/writer.py" = ["E501"]  # letter and pack text

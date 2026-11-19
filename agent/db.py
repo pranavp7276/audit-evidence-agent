@@ -38,9 +38,20 @@ _reader: psycopg.Connection | None = None
 def read_rows(sql: str, params: tuple | dict | None = None) -> list[dict]:
     """Run a read-only query on one reused agent_reader connection (tools make many small queries)."""
     global _reader
-    if _reader is None or _reader.closed:
-        _reader = psycopg.connect(database_url(), row_factory=dict_row, autocommit=True)
-        _reader.execute("SET ROLE agent_reader")
-        _reader.execute(f"SET statement_timeout = {int(os.environ.get('AGENT_SQL_TIMEOUT_MS', '30000'))}")
-        _reader.execute("SET default_transaction_read_only = on")
-    return _reader.execute(sql, params).fetchall()
+    for attempt in (1, 2):
+        try:
+            if _reader is None or _reader.closed:
+                _reader = psycopg.connect(database_url(), row_factory=dict_row, autocommit=True)
+                _reader.execute("SET ROLE agent_reader")
+                _reader.execute(f"SET statement_timeout = {int(os.environ.get('AGENT_SQL_TIMEOUT_MS', '30000'))}")
+                _reader.execute("SET default_transaction_read_only = on")
+            return _reader.execute(sql, params).fetchall()
+        except psycopg.OperationalError:  # the server dropped an idle connection: reconnect once
+            if attempt == 2:
+                raise
+            try:
+                _reader.close()
+            except Exception:
+                pass
+            _reader = None
+    return []

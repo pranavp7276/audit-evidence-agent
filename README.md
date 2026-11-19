@@ -18,19 +18,30 @@ make setup           # starts Postgres, applies migrations, loads raw, builds st
 make test
 ```
 
-## The platform (web app)
+## The platform (for collections auditors)
 ```bash
-python -m agent serve                    # http://127.0.0.1:8000
-python -m agent serve --host 0.0.0.0     # let coworkers on your network connect
+python -m agent serve                                          # http://127.0.0.1:8000
+python -m agent serve --host 0.0.0.0                           # let coworkers on your network connect
 APP_PASSWORD=choose-one python -m agent serve --host 0.0.0.0   # require a password (any user name)
 ```
-Upload or paste an audit request (PDF, `.eml` or text), and the agent splits it into checks, tests the
-evidence for each sampled account and records cited findings. In the browser you get, per run: an overview
-by check and severity, every finding with its cited source records (and the raw record itself), the gap
-report graded on the request's severity scale (CSV download), an editable draft response letter, the evidence
-pack (zip), and scoring against a gap key. Everyone who points `DATABASE_URL` at the same Postgres sees the
-same runs. `ANTHROPIC_API_KEY` switches the request parser from the keyword fallback to Claude
-(docs/decisions.md D-012). Synthetic data: `python scripts/gen_synthetic_data.py`, then `make load`.
+The auditor's workflow, start to finish:
+1. **New audit request:** upload or paste the request (PDF, `.eml`, text). The platform shows how each question
+   was read; confirm or change the test, set severities from the request's scale, split bundled questions.
+   Sampled accounts with no records are flagged before anything runs.
+2. **Summary:** verdict, gaps by severity, where gaps concentrate (collectors, months), and a next-steps checklist.
+3. **Questions:** how each question was tested and its result; write the management comment for each.
+4. **Gap register and Follow-up:** every gap with the records it cites. Confirm, dispute (with a reason), plan
+   remediation, singly or in bulk. Items that could not be determined are chased here. A dispute adds a note;
+   the gap is still reported (CLAUDE.md rule 2).
+5. **Accounts:** one borrower's file with every record on a UTC timeline, events behind findings highlighted.
+6. **Response letter:** generated from the findings and your comments, edited, versioned and taken through
+   draft, compliance review and approved (approval is blocked while placeholders remain).
+7. **Evidence pack:** zip with index, extracts, gap report, follow-up list, review trail, letter, rules.
+8. **Rules & data:** the D12 limits in force, what each check tests, the assumptions, and the data read.
+
+Findings are never edited. Reviews, management comments and letter versions are append-only tables
+(`db/migrations/V003__auditor_workflow.sql`). `ANTHROPIC_API_KEY` switches the request reader from the keyword
+fallback to Claude (docs/decisions.md D-012). Synthetic data: `python scripts/gen_synthetic_data.py`, then `make load`.
 
 ## How it fits together
 ```

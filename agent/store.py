@@ -17,13 +17,15 @@ def _git_sha() -> str | None:
         return None
 
 
-def start_run(request: Request) -> UUID:
+def start_run(request: Request, lender: str | None = None, response_due: str | None = None,
+              created_by: str | None = None) -> UUID:
     with connect() as conn:
         row = conn.execute(
-            """INSERT INTO audit.runs (request_id, request_source, request_path, severity_scale, agent_version)
-               VALUES (%s, %s, %s, %s, %s) RETURNING run_id""",
+            """INSERT INTO audit.runs (request_id, request_source, request_path, severity_scale, agent_version,
+                                       lender, response_due, created_by)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING run_id""",
             (request.request_id, request.source, request.path,
-             Jsonb(request.severity_scale), _git_sha()),
+             Jsonb(request.severity_scale), _git_sha(), lender or None, response_due or None, created_by or None),
         ).fetchone()
         return row["run_id"]
 
