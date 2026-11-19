@@ -12,9 +12,7 @@ git clone <repo-url> && cd audit-evidence-agent
 cp .env.example .env
 python -m venv .venv && source .venv/bin/activate
 make install
-# copy the data files from the shared drive into data/raw/ (paths in data/manifest.yaml)
-make data-check      # confirms you have the same data as everyone else
-make setup           # starts Postgres, applies migrations, loads raw, builds staging
+make setup           # starts Postgres, applies migrations, generates the synthetic book, builds staging
 make test
 ```
 
@@ -49,7 +47,7 @@ The data is a CN Core replica (docs/cn_core_model.md). The auditor's workflow, s
 Findings are never edited. Reviews, management comments and letter versions are append-only tables
 (`db/migrations/V003__auditor_workflow.sql`). `SARVAM_API_KEY` (in `.env`) turns on the models: the decision model reads each question, the reasoning
 model handles bundled questions and plain instructions, and a chat model powers the help assistant in the Guide (docs/decisions.md D-020).
-Without a key the keyword reader is used. Synthetic data: `python scripts/gen_synthetic_data.py`, then `make load`.
+Without a key the keyword reader is used. Synthetic data: `make data` (scripts/gen_book.py); `make tags` checks the evidence tags the checks need against the database.
 
 ## How it fits together
 ```
@@ -65,7 +63,7 @@ Six layers, each importing only from layers below it: see [docs/architecture.md]
 
 | Schema | Holds | Owned by |
 |---|---|---|
-| `raw` | source files as provided, all TEXT, plus `_row_no` | `scripts/load_data.py` |
+| `cn_core`, `compliance`, `uamdb` | the CN Core replica: only the tables and columns an audit check or a named sandbox dataset reads (docs/cn_core_model.md) | `db/migrations/V005..V018`, `scripts/gen_book.py` |
 | `staging` | typed views, every timestamp in UTC with the original kept | `db/staging/R__*.sql` |
 | `audit` | runs, checks, sampled accounts, findings, citations | `db/migrations/V*.sql` |
 
@@ -74,7 +72,7 @@ citation; a gap must have a severity; findings of a completed run cannot be chan
 the agent's SQL tool runs as a read-only role.
 
 ## Commands
-`make help` lists them all. Most used: `setup`, `load`, `test`, `lint`,
+`make help` lists them all. Most used: `setup`, `data`, `tags`, `test`, `lint`,
 `make eval RUN=<run_id> KEY=eval/gap_keys/<file>.csv`.
 
 ## Working together

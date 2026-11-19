@@ -35,7 +35,7 @@ class AgentCertificationCheck(BaseCheck):
                 oks.append((k, f"Collector {code} was certified on {day} for call {k}.", [call, cite(valid[0], _CERT, "supporting")]))
             else:
                 roster = get_collector(c["collector_user_id"])
-                support = ([cite(x, _CERT, "supporting") for x in certs] or ([cite(roster, ("employee_code", "agency", "role_name"), "supporting")] if roster else []))
+                support = ([cite(x, _CERT, "supporting") for x in certs] or ([cite(roster, ("employee_code", "agency", "agency_code"), "supporting")] if roster else []))
                 why = "its certificate was not valid on that date" if certs else "the register has no certificate for them"
                 gaps.append((k, f"Collector {code} held no valid certificate on {day} for call {k}: {why}.", [call, *support]))
         return self.assemble(account_id, gaps, oks, unknown, "No outbound call attempts in the period to test.")

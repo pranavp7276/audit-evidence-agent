@@ -23,6 +23,10 @@ class CheckType(str, Enum):
     NOTICE_TIMELINE = "notice_timeline"
     AGENT_CERTIFICATION = "agent_certification"
     RECORDING_COMPLETENESS = "recording_completeness"
+    TEMPLATE_APPROVAL = "template_approval"
+    COLLECTOR_ACTIVE = "collector_active"
+    CALLER_ID_REGISTERED = "caller_id_registered"
+    THIRD_PARTY_DISCLOSURE = "third_party_disclosure"
     OTHER = "other"
 
 
@@ -47,6 +51,7 @@ class SourceSystem(str, Enum):
     TRANSCRIPT_STORE = "transcript_store"
     CONSENT_REGISTRY = "consent_registry"
     CONTACT_LOG = "contact_log"
+    CALLER_ID_REGISTRY = "caller_id_registry"
 
 
 class Request(BaseModel):
@@ -76,7 +81,7 @@ class CheckSpec(BaseModel):
 class Citation(BaseModel):
     """A pointer to the exact record a statement rests on."""
     source_system: SourceSystem
-    source_table: str = Field(description="raw.<table> the record lives in.")
+    source_table: str = Field(description="schema.table the record lives in, e.g. compliance.notice.")
     record_key: str = Field(description="Natural key, or the raw _row_no.")
     record_ts_utc: datetime | None = None
     record_ts_original: str | None = Field(

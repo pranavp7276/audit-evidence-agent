@@ -17,12 +17,15 @@ from agent.core.db import read_rows
 
 SEVERITY_DEFAULT = {"consent_before_contact": "Critical", "calling_hours": "Critical", "calling_frequency": "Critical",
                     "verification_before_disclosure": "Critical", "notice_timeline": "Major", "agent_certification": "Major",
-                    "recording_completeness": "Minor"}
+                    "recording_completeness": "Minor", "template_approval": "Major", "collector_active": "Major", "caller_id_registered": "Major",
+                    "third_party_disclosure": "Critical"}
 
 TITLES = {"consent_before_contact": "Consent before contact", "calling_hours": "Calls within permitted hours",
           "calling_frequency": "Call attempts within the daily cap", "verification_before_disclosure": "Identity verified before dues disclosed",
           "notice_timeline": "Notices dispatched and served on time", "agent_certification": "Recovery agent certified",
-          "recording_completeness": "Recording retained for every connected call"}
+          "recording_completeness": "Recording retained for every connected call", "template_approval": "Messages sent on approved templates",
+          "collector_active": "Collector active on the call date", "caller_id_registered": "Calls from registered numbers",
+          "third_party_disclosure": "No dues disclosed to reference contacts"}
 
 _TOPICS: list[tuple[str, tuple[str, ...]]] = [
     ("consent_before_contact", (r"\bconsent\b", r"opt[- ]?in", r"\bpermission\b", r"whatsapp", r"\bsms\b")),
@@ -32,6 +35,10 @@ _TOPICS: list[tuple[str, tuple[str, ...]]] = [
     ("notice_timeline", (r"\bnotices?\b", r"within\s+\w+\s+(?:working |business |calendar )?days")),
     ("agent_certification", (r"certif", r"\bDRA\b", r"authori[sz]ed (?:agent|recovery)", r"trained and")),
     ("recording_completeness", (r"\brecord(?:ing|ed)?\b", r"retain", r"retention")),
+    ("template_approval", (r"\btemplates?\b", r"pre-?approved")),
+    ("collector_active", (r"terminated (?:agent|collector)", r"inactive (?:agent|collector)", r"active (?:agent|collector)")),
+    ("caller_id_registered", (r"registered (?:number|mobile)", r"personal (?:unregistered )?mobile", r"caller id")),
+    ("third_party_disclosure", (r"third[- ]party", r"reference contact", r"not provided by the borrower")),
 ]
 _WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
 _NUM = r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten)"
@@ -101,6 +108,10 @@ _CONTROL_TEXT = {
     "notice_timeline": "Timelines for dispatching or serving notices",
     "agent_certification": "Recovery agents must be certified, authorised or trained",
     "recording_completeness": "Calls must be recorded and recordings retained",
+    "template_approval": "Messages must use templates approved by the lender",
+    "collector_active": "Only active, not terminated, collectors may call",
+    "caller_id_registered": "Calls must be placed from registered numbers, not personal mobiles",
+    "third_party_disclosure": "Dues must not be disclosed to third parties or reference contacts",
     "none": "The clause does not state a testable obligation of these kinds",
 }
 

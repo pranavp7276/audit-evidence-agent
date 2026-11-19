@@ -32,6 +32,10 @@ _KEYWORDS: list[tuple[CheckType, tuple[str, ...]]] = [
     (CheckType.NOTICE_TIMELINE, ("notice",)),
     (CheckType.AGENT_CERTIFICATION, ("certif",)),
     (CheckType.RECORDING_COMPLETENESS, ("recording",)),
+    (CheckType.TEMPLATE_APPROVAL, ("template",)),
+    (CheckType.COLLECTOR_ACTIVE, ("active collector", "terminated", "collector was active")),
+    (CheckType.CALLER_ID_REGISTERED, ("registered to the agency", "personal mobile", "caller id", "registered number")),
+    (CheckType.THIRD_PARTY_DISCLOSURE, ("reference contact", "third party", "third-party", "did not provide")),
 ]
 _SOURCES: dict[CheckType, list[SourceSystem]] = {
     CheckType.CONSENT_BEFORE_CONTACT: [SourceSystem.CONTACT_LOG, SourceSystem.CONSENT_REGISTRY, SourceSystem.TEMPLATE_REGISTRY],
@@ -41,6 +45,10 @@ _SOURCES: dict[CheckType, list[SourceSystem]] = {
     CheckType.NOTICE_TIMELINE: [SourceSystem.NOTICE_DISPATCH, SourceSystem.D12, SourceSystem.HOLIDAY_CALENDAR],
     CheckType.AGENT_CERTIFICATION: [SourceSystem.CONTACT_LOG, SourceSystem.CERT_REGISTER, SourceSystem.COLLECTOR_ROSTER],
     CheckType.RECORDING_COMPLETENESS: [SourceSystem.CONTACT_LOG, SourceSystem.RECORDING_STORE],
+    CheckType.TEMPLATE_APPROVAL: [SourceSystem.CONTACT_LOG, SourceSystem.TEMPLATE_REGISTRY],
+    CheckType.COLLECTOR_ACTIVE: [SourceSystem.CONTACT_LOG, SourceSystem.COLLECTOR_ROSTER],
+    CheckType.CALLER_ID_REGISTERED: [SourceSystem.CONTACT_LOG, SourceSystem.CALLER_ID_REGISTRY],
+    CheckType.THIRD_PARTY_DISCLOSURE: [SourceSystem.CONTACT_LOG, SourceSystem.RECORDING_STORE, SourceSystem.TRANSCRIPT_STORE],
     CheckType.OTHER: [],
 }
 
@@ -103,6 +111,10 @@ _STANDARD: list[tuple[CheckType, str, str]] = [  # (type, question wording, defa
     (CheckType.NOTICE_TIMELINE, "Show that notices were served within the permitted timeline.", "Major"),
     (CheckType.AGENT_CERTIFICATION, "Confirm the recovery agent was certified on the date of each call they made.", "Major"),
     (CheckType.RECORDING_COMPLETENESS, "Provide the recording for every connected call.", "Minor"),
+    (CheckType.TEMPLATE_APPROVAL, "Show that every WhatsApp or SMS message was sent on a template approved at the time it was sent.", "Major"),
+    (CheckType.COLLECTOR_ACTIVE, "Confirm that the collector who made each call was an active collector on the date of the call.", "Major"),
+    (CheckType.CALLER_ID_REGISTERED, "Confirm that every call was placed from a number registered to the agency, not from a personal mobile.", "Major"),
+    (CheckType.THIRD_PARTY_DISCLOSURE, "Confirm that no dues were disclosed on calls to reference contacts the borrower did not provide.", "Critical"),
 ]
 DEFAULT_SCALE = ["Critical", "Major", "Minor"]  # used when the request gives none (docs/decisions.md D-014)
 _FULL_AUDIT = ("compliance audit", "guardrail", "all checks", "all the checks", "full audit", "everything", "all rules", "all the rules",
@@ -195,6 +207,10 @@ _CONTROLS = {
     "notice_timeline": "Legal or demand notices dispatched and served within the required timeline",
     "agent_certification": "Recovery agents or collectors certified, authorised or trained on the date of the call",
     "recording_completeness": "Call recordings available and retained for calls",
+    "template_approval": "Messages sent only on templates approved at the time they were sent",
+    "collector_active": "The collector who made a call was an active (not terminated or inactive) collector on the call date",
+    "caller_id_registered": "Calls placed only from numbers registered to the agency, never from a personal mobile",
+    "third_party_disclosure": "No dues disclosed on calls to reference contacts the borrower did not provide",
     "other": "None of the above: the question tests something else",
 }
 LOW_CONFIDENCE = 0.7

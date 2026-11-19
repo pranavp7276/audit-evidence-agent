@@ -1,0 +1,240 @@
+# Evidence tagging spec for CN (CreditNirvana platform)
+# Purpose: every event CN logs (call, field visit, message, notice, payment) and every master
+# record (collector, contact/consent, allocation) carries the fields + flags the audit agent
+# needs to mark each check evidenced / gap / cannot_determine WITH a cited record.
+#
+# Companion to config/check_catalog.yaml (check ids in `feeds:` refer to it).
+#
+# cn: status of the field in CN today — best knowledge, CONFIRM against CN_CORE / UAMDB:
+#   known   = CN captures it today (from dialer/telecalling work)
+#   likely  = typical for the module, probably present; confirm column/table
+#   gap     = known to be missing or not granular enough today
+#   new     = needs building
+# req: must (check cannot run without it) | should (improves evidence) | nice
+#
+# Flag values are three-valued: Y | N | U (unknown). U is NOT N. Mapping in the report:
+#   compliance flag = Y -> evidenced ; N -> gap ; U / null -> cannot_determine
+
+version: 1
+
+principles:
+  - id: P1-record-dont-block
+    text: "Flags RECORD what happened; they do not block dispatch (pre-dispatch prevention is CO-02, out of scope). A breach still gets logged, tagged N, and reported."
+  - id: P2-utc-plus-source
+    text: "Store every timestamp as UTC + source_tz + clock_source (server | dialer | device | vendor). Compute IST-day and IST-hour from UTC. Prefer server/dialer clocks over browser/device (CN already saw browser vs server timer mismatch)."
+  - id: P3-effective-dated-masters
+    text: "Collector status, certification, allocation, contacts, consent and preferences are effective-dated (valid_from / valid_to, SCD-2). Never overwrite — otherwise status 'on the call date' cannot be proven."
+  - id: P4-append-only
+    text: "Event rows and flags are append-only. Corrections are new rows with corrects_id + reason + user. Keeps the audit trail credible."
+  - id: P5-rule-snapshot
+    text: "Every computed flag stores rule_version (the D12 parameter set used: hours window, caps, notice days). Re-running with today's rules must not rewrite history."
+  - id: P6-flag-cites-records
+    text: "Every flag stores evidence_refs: the record ids it was computed from (e.g. consent_id, cert_id, recording_id). The report cites these, not the flag."
+  - id: P7-agent-reverifies
+    text: "The audit agent re-derives each verdict from raw fields; stored flags are a fast index and a cross-check. Flag/raw disagreement is itself reported."
+  - id: P8-borrower-level
+    text: "Compliance limits are per BORROWER per day, while CN dialer limits are per contact number (LeadID = hash(lender, account, number)). Compute borrower-level counts across all numbers and channels."
+  - id: P9-minimise-pii
+    text: "Store contact numbers as hash + last 4 in evidence tables; the pack shows account ref, dates, record ids only."
+
+# ---------------------------------------------------------------------------
+# Common envelope — on EVERY event row
+# ---------------------------------------------------------------------------
+common_envelope:
+  - {field: event_id,        req: must,   cn: known,  note: "stable unique id; cited in pack"}
+  - {field: event_type,      req: must,   cn: likely, note: "call | field_visit | message | notice | payment"}
+  - {field: lender_code,     req: must,   cn: known}
+  - {field: account_id,      req: must,   cn: known}
+  - {field: borrower_id,     req: must,   cn: likely, note: "needed to aggregate across accounts/numbers (P8)"}
+  - {field: agency_id,       req: must,   cn: known,  note: "agency/TL hierarchy exists (UAMDB RBAC)"}
+  - {field: collector_id,    req: must,   cn: known,  note: "must match roster/cert register IDs"}
+  - {field: event_ts_utc,    req: must,   cn: likely}
+  - {field: source_tz,       req: must,   cn: new,    note: "time zones differ between sources by design"}
+  - {field: clock_source,    req: must,   cn: new,    note: "server | dialer | device | vendor"}
+  - {field: dpd_at_event,    req: must,   cn: likely, note: "DPD bands exist in leadset filters; snapshot at event time"}
+  - {field: bucket_at_event, req: should, cn: likely}
+  - {field: source_system,   req: must,   cn: likely, note: "in-house dialer | SlashRTC | FOS app | comms gateway | notice vendor | manual entry"}
+  - {field: rule_version,    req: must,   cn: new,    note: "P5"}
+  - {field: created_by / created_at / corrects_id, req: must, cn: likely, note: "P4"}
+
+# ---------------------------------------------------------------------------
+# Events
+# ---------------------------------------------------------------------------
+entities:
+
+  call:
+    cn_source: "Telecalling — in-house CognifAI dialer CDR, SlashRTC CDR, Log Activity (disposition); FOS phone calls"
+    fields:
+      - {field: call_id,              req: must,   cn: known}
+      - {field: lead_id,              req: must,   cn: known,  note: "hash(lender, account, number)"}
+      - {field: campaign_id / process_instance_id, req: should, cn: known}
+      - {field: contact_number_hash,  req: must,   cn: likely}
+      - {field: contact_source,       req: must,   cn: new,    note: "borrower_provided | alternate | reference | skip_traced (needed for CNT-01; alternates up to 10 per account)"}
+      - {field: contact_relation,     req: should, cn: new,    note: "self | spouse | parent | reference | employer | unknown"}
+      - {field: cli_number,           req: must,   cn: likely, note: "caller ID presented; CLI-01"}
+      - {field: call_origin,          req: must,   cn: likely, note: "system_dialer | manual_dial | fos_mobile | inbound. In-house dialer places calls only from system (dial pad disabled)"}
+      - {field: attempt_ts_utc,       req: must,   cn: known}
+      - {field: answer_ts_utc / end_ts_utc, req: must, cn: known}
+      - {field: ring_time_s / talk_time_s, req: should, cn: known, note: "being added to CDR report (CN-4313)"}
+      - {field: call_status,          req: must,   cn: gap,    note: "need unreachable vs no-answer vs cut-during-ringing vs connected to settle attempts-vs-connects (OD-2)"}
+      - {field: disposition / sub_disposition, req: must, cn: known, note: "Log Activity submit disposes the call"}
+      - {field: ptp_amount / ptp_date, req: should, cn: known}
+      - {field: recording_id,         req: must,   cn: likely}
+      - {field: recording_status,     req: must,   cn: new,    note: "available | missing | upload_failed | purged"}
+      - {field: recording_duration_s, req: must,   cn: likely, note: "compare with talk_time to catch truncated recordings"}
+      - {field: transcript_id,        req: must,   cn: likely, note: "speech analytics output"}
+    flags:
+      - {flag: F_IN_HOURS,            feeds: [HRS-01], derive: "attempt_ts in IST within D12 window"}
+      - {flag: F_BORROWER_DAY_SEQ,    feeds: [FRQ-01], derive: "n-th attempt for this borrower on this IST day, across all numbers & accounts (P8)", type: int}
+      - {flag: F_OVER_DAILY_CAP,      feeds: [FRQ-01], derive: "F_BORROWER_DAY_SEQ > cap(D12, dpd_at_event)"}
+      - {flag: F_RESPECTS_PREFERENCE, feeds: [FRQ-02], derive: "attempt not in a customer-requested no-contact window/channel active at that time"}
+      - {flag: F_RECORDING_PRESENT,   feeds: [REC-01, REC-03], derive: "connected call has recording_status=available"}
+      - {flag: F_RECORDING_COMPLETE,  feeds: [REC-01], derive: "|recording_duration - talk_time| <= tolerance"}
+      - {flag: F_COLLECTOR_CERTIFIED, feeds: [CRT-01], derive: "DRA cert valid on IST call date", evidence_refs: [cert_id]}
+      - {flag: F_COLLECTOR_ACTIVE,    feeds: [AGT-01], derive: "roster status active on IST call date"}
+      - {flag: F_COLLECTOR_TRAINED,   feeds: [CRT-03], derive: "required training completed before call date"}
+      - {flag: F_REGISTERED_CLI,      feeds: [CLI-01], derive: "cli_number in agency's registered list for this lender on call date; call_origin != fos_mobile-unregistered"}
+      - {flag: F_NON_FIRST_PARTY,     feeds: [CNT-01], derive: "contact_source != borrower_provided"}
+      - {flag: F_DISPOSED,            feeds: [DSP-01, COV-01], derive: "disposition present"}
+      - {flag: F_AGENCY_NOTICE_BEFORE, feeds: [NOT-02], derive: "agency-appointment notice served before agency's first contact on account"}
+    transcript_tags:   # from speech analytics (QM sheet shows most are already covered); store turn index + offset_s so the pack can cite "rec 123 @ 00:42"
+      - {tag: T_RECORDING_DISCLAIMER, feeds: [REC-02], qm: B5}
+      - {tag: T_SELF_INTRO,           feeds: [IDN-01], qm: B3}
+      - {tag: T_LENDER_NAMED,         feeds: [IDN-01], qm: B4}
+      - {tag: T_RPC_CONFIRMED,        feeds: [VER-01], qm: B6, note: "turn idx + method (prefix + last name)"}
+      - {tag: T_DUES_DISCLOSED,       feeds: [VER-01, CNT-01], qm: B7, note: "turn idx of first dues / EMI / loan a/c mention"}
+      - {tag: T_DISCLOSED_BEFORE_RPC, feeds: [VER-01], derive: "T_DUES_DISCLOSED.turn < T_RPC_CONFIRMED.turn or no RPC"}
+      - {tag: T_THIRD_PARTY_DISCLOSURE, feeds: [VER-01, CNT-01]}
+      - {tag: T_ABUSE_THREAT,         feeds: [CND-01], qm: B28}
+      - {tag: T_FALSE_PROMISE,        feeds: [CND-02], qm: B15}
+      - {tag: T_PERSONAL_PAYMENT_ASK, feeds: [CND-03], note: "UPI id / wallet / personal or agency a/c"}
+      - {tag: T_SENSITIVE_OCCASION,   feeds: [CND-04], qm: B24}
+      - {tag: T_CUSTOMER_NO_CALL_REQUEST, feeds: [FRQ-02], note: "creates a preference record (see contact_consent_master)"}
+      - {tag: T_DISPOSITION_MISMATCH, feeds: [DSP-01], qm: B22, derive: "transcript outcome vs disposition (e.g. PTP tagged, no PTP said)"}
+
+  field_visit:
+    cn_source: "FOS / field app (FOS calling module); visit log + outcome"
+    fields:
+      - {field: visit_id,            req: must,   cn: likely}
+      - {field: checkin_ts_utc / checkout_ts_utc, req: must, cn: likely, note: "server-stamped, not device-only"}
+      - {field: "checkin_geo (lat, lon, accuracy_m)", req: must, cn: likely}
+      - {field: address_id_visited,  req: must,   cn: new,   note: "residence | workplace | customer_chosen; links to borrower address"}
+      - {field: geo_distance_m,      req: must,   cn: new,   note: "computed vs address geocode"}
+      - {field: person_met,          req: must,   cn: likely, note: "self | family | third_party | none"}
+      - {field: visit_outcome / disposition, req: must, cn: likely}
+      - {field: photo_id / selfie_id, req: should, cn: likely}
+      - {field: receipt_id,          req: should, cn: likely, note: "if payment collected"}
+      - {field: customer_ack,        req: nice,   cn: new,   note: "OTP / e-sign acknowledgement of visit"}
+    flags:
+      - {flag: F_IN_HOURS,            feeds: [HRS-01], derive: "checkin_ts in IST within window (CHK timing applies to visits)"}
+      - {flag: F_BORROWER_DAY_SEQ,    feeds: [FRQ-01], type: int, derive: "visits counted with calls if D12 says so"}
+      - {flag: F_GEO_VERIFIED,        feeds: [VIS-01], derive: "geo_distance_m <= tolerance"}
+      - {flag: F_OUTCOME_CAPTURED_SAME_DAY, feeds: [VIS-02], derive: "visit_outcome present and captured within OD-5 lag of checkin"}
+      - {flag: F_COLLECTOR_CERTIFIED, feeds: [CRT-01]}
+      - {flag: F_COLLECTOR_ACTIVE,    feeds: [AGT-01]}
+      - {flag: F_AGENCY_NOTICE_BEFORE, feeds: [NOT-02]}
+      - {flag: F_THIRD_PARTY_MET,     feeds: [CNT-01], derive: "person_met in (family, third_party)"}
+      - {flag: F_DISPOSED,            feeds: [COV-01]}
+    note: "An agency 'NA – no field' claim is evidenced by ZERO field_visit rows for that agency in the period."
+
+  message:
+    cn_source: "Communication module — SMS / WhatsApp / email / IVR / voice blast via gateway"
+    fields:
+      - {field: message_id,          req: must,   cn: likely}
+      - {field: channel,             req: must,   cn: likely}
+      - {field: template_id + template_version, req: must, cn: likely}
+      - {field: sender_id,           req: must,   cn: likely, note: "WABA number / SMS header / email domain"}
+      - {field: sent_ts_utc / delivered_ts_utc / read_ts_utc, req: must, cn: likely, note: "vendor timestamps often in another tz — tag source_tz"}
+      - {field: consent_id_at_send,  req: must,   cn: new,   note: "snapshot of the consent record relied on"}
+      - {field: content_hash,        req: should, cn: new,   note: "proves rendered text = approved template"}
+      - {field: initiated_by,        req: should, cn: likely, note: "system_journey | collector | supervisor"}
+    flags:
+      - {flag: F_CONSENT_VALID_AT_SEND,     feeds: [CNS-01], derive: "consent for this channel captured_at < sent_ts and not revoked", evidence_refs: [consent_id]}
+      - {flag: F_TEMPLATE_APPROVED_AT_SEND, feeds: [TPL-01], derive: "approved_at <= sent_ts < retired_at"}
+      - {flag: F_IN_HOURS,                  feeds: [HRS-01], derive: "only if D12 applies hours to messages"}
+      - {flag: F_REGISTERED_SENDER,         feeds: [CLI-01]}
+      - {flag: F_BORROWER_DAY_SEQ,          feeds: [FRQ-01], type: int, derive: "per channel, if D12 caps messages"}
+
+  notice:
+    cn_source: "Notice module / dispatch tracker (+ courier / speed-post / email vendor feeds)"
+    fields:
+      - {field: notice_id,           req: must,   cn: likely}
+      - {field: notice_type,         req: must,   cn: likely, note: "demand | agency_appointment | pre-legal | legal | ..."}
+      - {field: trigger_event + trigger_date, req: must, cn: new, note: "e.g. DPD crossed X; starts the clock"}
+      - {field: due_by_date,         req: must,   cn: new,   note: "computed: trigger + N days, working days excl. holidays of borrower's state"}
+      - {field: borrower_state,      req: must,   cn: likely, note: "for state holiday calendar"}
+      - {field: dispatch_ts_utc,     req: must,   cn: likely}
+      - {field: mode,                req: must,   cn: likely, note: "speed_post | registered_AD | courier | email | whatsapp"}
+      - {field: tracking_ref,        req: must,   cn: likely, note: "AWB / consignment no."}
+      - {field: service_date,        req: must,   cn: gap,   note: "delivery date from vendor feed — dispatch date != service date"}
+      - {field: pod_document_id,     req: must,   cn: new,   note: "proof of delivery scan / tracking snapshot"}
+      - {field: rto_reason,          req: should, cn: likely}
+      - {field: address_id_used,     req: should, cn: likely}
+    flags:
+      - {flag: F_DISPATCHED_ON_TIME, feeds: [NOT-01], derive: "dispatch date <= due_by_date"}
+      - {flag: F_SERVED_ON_TIME,     feeds: [NOT-01], derive: "service_date <= due_by_date (U if no service_date)"}
+      - {flag: F_POD_PRESENT,        feeds: [NOT-01]}
+      - {flag: F_HOLIDAY_ADJUSTED,   feeds: [NOT-01], derive: "due_by computed with holiday calendar version X"}
+
+  payment:
+    cn_source: "Payments / receipts; deposit reconciliation"
+    fields:
+      - {field: receipt_id,          req: must,   cn: likely}
+      - {field: mode,                req: must,   cn: likely, note: "payment_link | branch | NACH | cash_pickup | cheque"}
+      - {field: beneficiary_account_ref, req: must, cn: new, note: "must be a lender collection account"}
+      - {field: collected_by,        req: must,   cn: likely}
+      - {field: collected_ts_utc,    req: must,   cn: likely}
+      - {field: deposit_slip_id + deposit_ts_utc, req: must, cn: new, note: "for cash/cheque"}
+    flags:
+      - {flag: F_AUTHORISED_CHANNEL,  feeds: [CND-03]}
+      - {flag: F_RECEIPT_ISSUED,      feeds: [PAY-01], derive: "system receipt_id generated to borrower for the collection"}
+      - {flag: F_DEPOSITED_WITHIN_TAT, feeds: [PAY-01]}
+      - {flag: F_COLLECTOR_AUTHORISED_TO_COLLECT, feeds: [PAY-01, AGT-01], derive: "collected_by active + certified on collected date"}
+
+# ---------------------------------------------------------------------------
+# Masters (effective-dated, P3)
+# ---------------------------------------------------------------------------
+masters:
+
+  collector_master:
+    cn_source: "UAMDB users/roles + agency onboarding (+ certification register feed)"
+    fields:
+      - {field: collector_id, req: must, cn: known}
+      - {field: agency_id + role, req: must, cn: known}
+      - {field: "status_history (active | inactive | terminated, valid_from, valid_to)", req: must, cn: gap, note: "status likely overwritten today; needs history"}
+      - {field: dra_cert_no + valid_from + valid_to, req: must, cn: new}
+      - {field: police_verification_date / rcu_status, req: should, cn: new}
+      - {field: "training_records (type, completed_on)", req: should, cn: new}
+      - {field: id_card_issued_on / returned_on, req: nice, cn: new}
+      - {field: "lender_portfolio_assignments (lender, valid_from, valid_to)", req: should, cn: likely}
+      - {field: registered_clis / devices, req: should, cn: new}
+    feeds: [CRT-01, CRT-02, CRT-03, AGT-01, AGT-02, ACC-01, CLI-01]
+
+  contact_consent_master:
+    cn_source: "Customer contacts + consent registry + preferences"
+    fields:
+      - {field: "contact (number_hash, source, relation, added_at)", req: must, cn: gap, note: "source/relation needed for CNT-01"}
+      - {field: "consent (channel, purpose, captured_at, method, artefact_id, revoked_at)", req: must, cn: likely}
+      - {field: "preference (no_call_window / channel / place, valid_from, valid_to, origin_event_id)", req: should, cn: new}
+      - {field: "addresses (type, geocode, state)", req: must, cn: likely}
+    feeds: [CNS-01, CNT-01, FRQ-02, VIS-01, NOT-01]
+
+  allocation:
+    cn_source: "Allocation (account -> agency -> TL -> collector)"
+    fields:
+      - {field: account_id, req: must, cn: known}
+      - {field: agency_id / tl_id / collector_id, req: must, cn: known}
+      - {field: valid_from / valid_to, req: must, cn: likely, note: "history required, not just current owner"}
+    feeds: [COV-01, NOT-02, AGT-02]
+
+system_logs:
+  - {log: "access_log (login, logout, disable events per user)", feeds: [ACC-01], cn: likely}
+  - {log: "recording_store_inventory (count by month, purge events)", feeds: [REC-03], cn: new}
+  - {log: rule_config_history (D12 params by version), feeds: [HRS-01, FRQ-01, NOT-01], cn: new}
+  - {log: "template_registry_history (approved_at, retired_at)", feeds: [TPL-01], cn: likely}
+
+# Build priority — P0 maps to the checks the problem statement names explicitly
+build_priority:
+  P0: [F_IN_HOURS, F_BORROWER_DAY_SEQ, F_OVER_DAILY_CAP, F_CONSENT_VALID_AT_SEND, T_RPC_CONFIRMED, T_DUES_DISCLOSED, T_DISCLOSED_BEFORE_RPC, T_THIRD_PARTY_DISCLOSURE, F_DISPATCHED_ON_TIME, F_SERVED_ON_TIME, F_HOLIDAY_ADJUSTED, F_COLLECTOR_CERTIFIED, F_RECORDING_PRESENT, source_tz, clock_source, rule_version]
+  P1: [F_TEMPLATE_APPROVED_AT_SEND, F_COLLECTOR_ACTIVE, F_RECORDING_COMPLETE, T_RECORDING_DISCLAIMER, T_SELF_INTRO, T_LENDER_NAMED, T_ABUSE_THREAT, T_FALSE_PROMISE, F_NON_FIRST_PARTY, F_REGISTERED_CLI, F_REGISTERED_SENDER, F_DISPOSED, F_POD_PRESENT]
+  P2: [F_GEO_VERIFIED, F_OUTCOME_CAPTURED_SAME_DAY, F_RECEIPT_ISSUED, F_AUTHORISED_CHANNEL, F_DEPOSITED_WITHIN_TAT, F_RESPECTS_PREFERENCE, F_COLLECTOR_TRAINED, F_AGENCY_NOTICE_BEFORE, T_PERSONAL_PAYMENT_ASK, T_SENSITIVE_OCCASION, T_DISPOSITION_MISMATCH, F_THIRD_PARTY_MET, T_CUSTOMER_NO_CALL_REQUEST]

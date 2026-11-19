@@ -20,7 +20,7 @@ check is event-level. Status is `evidenced`, `gap` or `cannot_determine`.
 A check never returns nothing for a sampled account.
 
 ## Citation
-`source_system`, `source_table` (raw.*), `record_key` (natural key or `_row_no`), the UTC timestamp
+`source_system`, `source_table` (schema.table, e.g. compliance.notice), `record_key` (natural key or `_row_no`), the UTC timestamp
 used, the original timestamp string, a minimal `extract`, and `role` (primary / supporting).
 
 ## Tools (agent → data)

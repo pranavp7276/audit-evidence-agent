@@ -82,3 +82,13 @@ def gap_keys() -> list[str]:
     return sorted(p.name for p in GAP_KEYS.glob("*.csv"))
 
 
+
+
+@router.get("/api/evidence-coverage")
+def evidence_coverage() -> dict:
+    """Which evidence tags each check needs are captured, derived or missing in this database, read from the tag spec and the source map."""
+    from agent.services.evidence_coverage import LABEL, coverage
+    cov = coverage()
+    return {"counts": cov["counts"], "labels": LABEL, "build": cov["build"], "problems": cov["problems"], "checks": cov["checks"],
+            "not_captured": [{"name": i["name"], "section": i["section"], "reason": i["reason"]} for i in cov["items"] if i["status"] == "not_captured"],
+            "not_needed": [{"name": i["name"], "section": i["section"], "reason": i["reason"]} for i in cov["items"] if i["status"] == "not_needed"]}

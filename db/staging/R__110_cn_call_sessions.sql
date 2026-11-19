@@ -17,8 +17,13 @@ SELECT l.dialer_code || ':' || l.call_session_id                                
        min(tpi.process_mode)                                                           AS process_mode,
        min(l.call_user_id)                                                             AS collector_user_id,
        min(u.employee_code)                                                            AS employee_code,
+       min(o.organization_code)                                                        AS agency_code,
+       min(l.user_contact_number)                                                      AS cli_number,
+       min(ccn.contact_type)                                                           AS contact_type,
+       min(ccn.source)                                                                 AS contact_source,
        to_char(min(l.call_start_date_time), 'YYYY-MM-DD HH24:MI:SS')                   AS started_ts_src,
        min(dc.timezone)                                                                AS started_ts_src_tz,
+       min(dc.clock_source)                                                            AS clock_source,
        (min(l.call_start_date_time) AT TIME ZONE min(dc.timezone))                     AS started_ts_utc,
        (max(l.call_end_date_time) AT TIME ZONE min(dc.timezone))                       AS ended_ts_utc,
        max(l.call_duration)                                                            AS duration_sec,
@@ -34,6 +39,8 @@ JOIN cn_core.tele_process_instance_call_logs l ON l.dialer_code = b.dialer_code 
 JOIN compliance.dialer_config dc ON dc.dialer_code = l.dialer_code
 JOIN cn_core.account acc ON acc.id = b.account_id
 LEFT JOIN uamdb.users u ON u.user_id = l.call_user_id
+LEFT JOIN uamdb.organization o ON o.organization_id = u.organization_id
+LEFT JOIN cn_core.customer_contact_number ccn ON ccn.customer_id = b.customer_id AND ccn.contact_no = l.call_contact_number
 LEFT JOIN cn_core.tele_process_instance tpi ON tpi.id = l.tele_process_instance_id
 LEFT JOIN compliance.call_session_xref x
        ON x.mirror_dialer_code = l.dialer_code AND x.mirror_session_id = l.call_session_id AND x.canonical_dialer_code <> l.dialer_code

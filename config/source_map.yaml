@@ -1,0 +1,168 @@
+# Where each evidence tag in config/evidence_tags.yaml lives in this database (BUILD_PLAN M0). Never guess a column: it is read from here.
+# `python -m agent tags` checks every column named here against the database and every `by:` against the implemented checks,
+# and writes docs/evidence_coverage.md.
+#
+# status:
+#   present       stored: `at` lists the staging column(s) (schema.table.column)
+#   derived       computed by an implemented check (`by`) from the columns in `from`
+#   available     the data is there, no check computes it yet (`at`)
+#   not_captured  a catalog check needs it and the data does not carry it: a gap in the source system (see BUILD_PLAN section 11)
+#   not_needed    the spec lists it, but no check we run reads it, so it is not stored (docs/decisions.md D-029)
+#   not_in_scope  the activity does not exist in this dataset (no field visits, no payments)
+#
+# `for:` (master fields only) says which catalog checks need that field; the spec lists the checks per master, not per field.
+
+version: 1
+
+# catalog check id -> the implemented check type (agent/checks), or null when it is not built
+checks:
+  HRS-01: calling_hours
+  FRQ-01: calling_frequency
+  CNS-01: consent_before_contact
+  TPL-01: template_approval
+  CLI-01: caller_id_registered
+  CNT-01: third_party_disclosure
+  AGT-01: collector_active
+  REC-01: recording_completeness
+  VER-01: verification_before_disclosure
+  CRT-01: agent_certification
+  NOT-01: notice_timeline
+
+common_envelope:
+  event_id: {status: present, at: [staging.call_sessions.session_key, staging.messages.message_id, staging.notices.notice_id]}
+  event_type: {status: present, at: [staging.call_sessions.direction], note: "which table the row is in; calls also carry direction"}
+  lender_code: {status: present, at: [staging.accounts.institution_code, staging.call_sessions.institution_code]}
+  account_id: {status: present, at: [staging.call_sessions.account_id, staging.messages.account_id, staging.notices.account_id]}
+  borrower_id: {status: present, at: [staging.call_sessions.customer_id, staging.messages.customer_id]}
+  agency_id: {status: present, at: [staging.call_sessions.agency_code]}
+  collector_id: {status: present, at: [staging.call_sessions.collector_user_id, staging.call_sessions.employee_code]}
+  event_ts_utc: {status: present, at: [staging.call_sessions.started_ts_utc, staging.messages.sent_ts_utc]}
+  source_tz: {status: present, at: [staging.call_sessions.started_ts_src_tz, staging.messages.sent_ts_src_tz, staging.consents.effective_ts_src_tz]}
+  clock_source: {status: present, at: [staging.call_sessions.clock_source, staging.messages.clock_source, staging.consents.clock_source], note: "added in V018"}
+  dpd_at_event: {status: not_captured, reason: "only the account's current DPD (staging.accounts.dpd) is held. D12 caps here are per lender, not per DPD band, so no check needs it yet"}
+  bucket_at_event: {status: not_needed, reason: "no check reads it"}
+  source_system: {status: present, at: [staging.call_sessions.dialer_code]}
+  rule_version: {status: derived, by: calling_hours, from: [staging.policy_rules.policy_code, staging.policy_rules.effective_from], note: "the D12 rule in force on the event date"}
+  created_by / created_at / corrects_id: {status: not_in_scope, reason: "findings are append-only; source rows are not corrected in this dataset"}
+
+entities:
+  call:
+    fields:
+      call_id: {status: present, at: [staging.call_sessions.session_key]}
+      lead_id: {status: not_needed, reason: "the D12 cap counts per contact number per day, which the call log carries"}
+      campaign_id / process_instance_id: {status: not_needed, reason: "process mode (manual or campaign) is kept; the instance id is not read"}
+      contact_number_hash: {status: present, at: [staging.call_sessions.contact_no], note: "shown masked to the last four digits"}
+      contact_source: {status: present, at: [staging.call_sessions.contact_source]}
+      contact_relation: {status: present, at: [staging.call_sessions.contact_type], note: "PRIMARY, ALTERNATE or REFERENCE"}
+      cli_number: {status: present, at: [staging.call_sessions.cli_number], note: "the number the call was placed from"}
+      call_origin: {status: present, at: [staging.call_sessions.process_mode, staging.call_sessions.direction]}
+      attempt_ts_utc: {status: present, at: [staging.call_sessions.started_ts_utc]}
+      answer_ts_utc / end_ts_utc: {status: present, at: [staging.call_sessions.ended_ts_utc], note: "the answer time is not held separately"}
+      ring_time_s / talk_time_s: {status: present, at: [staging.call_sessions.duration_sec], note: "talk time; ring time is not held"}
+      call_status: {status: present, at: [staging.call_sessions.statuses, staging.call_sessions.final_status, staging.call_sessions.connected]}
+      disposition / sub_disposition: {status: not_needed, reason: "DSP-01 is not built; dispositions were removed with the activity log"}
+      ptp_amount / ptp_date: {status: not_needed, reason: "promises to pay have no bearing on a collections-conduct audit"}
+      recording_id: {status: present, at: [staging.recordings.recording_id]}
+      recording_status: {status: present, at: [staging.recordings.storage_status]}
+      recording_duration_s: {status: present, at: [staging.recordings.duration_sec]}
+      transcript_id: {status: present, at: [staging.transcript_segments.session_key]}
+    flags:
+      F_IN_HOURS: {status: derived, by: calling_hours, from: [staging.call_sessions.started_ts_utc, staging.policy_rules.rule_value]}
+      F_BORROWER_DAY_SEQ: {status: derived, by: calling_frequency, from: [staging.call_sessions.contact_no, staging.call_sessions.started_ts_utc]}
+      F_OVER_DAILY_CAP: {status: derived, by: calling_frequency, from: [staging.policy_rules.rule_value]}
+      F_RESPECTS_PREFERENCE: {status: not_captured, reason: "no contact-preference records, and FRQ-02 is not built"}
+      F_RECORDING_PRESENT: {status: derived, by: recording_completeness, from: [staging.recordings.storage_status]}
+      F_RECORDING_COMPLETE: {status: available, at: [staging.recordings.duration_sec, staging.call_sessions.duration_sec], note: "both durations are held; no check compares them yet"}
+      F_COLLECTOR_CERTIFIED: {status: derived, by: agent_certification, from: [staging.certifications.valid_from, staging.certifications.valid_to]}
+      F_COLLECTOR_ACTIVE: {status: derived, by: collector_active, from: [staging.collector_status.status, staging.collector_status.valid_from, staging.collector_status.valid_to]}
+      F_COLLECTOR_TRAINED: {status: not_captured, reason: "no training records for collectors"}
+      F_REGISTERED_CLI: {status: derived, by: caller_id_registered, from: [staging.call_sessions.cli_number, staging.registered_clis.cli_number, staging.registered_clis.valid_from]}
+      F_NON_FIRST_PARTY: {status: derived, by: third_party_disclosure, from: [staging.call_sessions.contact_type]}
+      F_DISPOSED: {status: not_needed, reason: "COV-01 and DSP-01 are not built"}
+      F_AGENCY_NOTICE_BEFORE: {status: not_captured, reason: "no agency-appointment notices in the notice history"}
+    transcript_tags:
+      T_RECORDING_DISCLAIMER: {status: not_captured, reason: "the transcript carries only identity-check and dues-disclosure tags"}
+      T_SELF_INTRO: {status: not_captured, reason: "no speech-analytics tag for it"}
+      T_LENDER_NAMED: {status: not_captured, reason: "no speech-analytics tag for it"}
+      T_RPC_CONFIRMED: {status: present, at: [staging.transcript_segments.tag], note: "tag IDENTITY_CHECK_PASS, with its offset"}
+      T_DUES_DISCLOSED: {status: present, at: [staging.transcript_segments.tag, staging.transcript_segments.start_offset_sec], note: "tag DUES_DISCLOSURE"}
+      T_DISCLOSED_BEFORE_RPC: {status: derived, by: verification_before_disclosure, from: [staging.transcript_segments.tag, staging.transcript_segments.start_offset_sec]}
+      T_THIRD_PARTY_DISCLOSURE: {status: derived, by: third_party_disclosure, from: [staging.call_sessions.contact_type, staging.transcript_segments.tag]}
+      T_ABUSE_THREAT: {status: not_captured, reason: "no speech-analytics tag for it"}
+      T_FALSE_PROMISE: {status: not_captured, reason: "no speech-analytics tag for it"}
+      T_PERSONAL_PAYMENT_ASK: {status: not_captured, reason: "no speech-analytics tag for it"}
+      T_SENSITIVE_OCCASION: {status: not_captured, reason: "no speech-analytics tag for it"}
+      T_CUSTOMER_NO_CALL_REQUEST: {status: not_captured, reason: "no speech-analytics tag for it"}
+      T_DISPOSITION_MISMATCH: {status: not_captured, reason: "no dispositions, and DSP-01 is not built"}
+
+  field_visit:
+    fields: {_all: {status: not_in_scope, reason: "this dataset has no field visits"}}
+    flags: {_all: {status: not_in_scope, reason: "this dataset has no field visits"}}
+
+  message:
+    fields:
+      message_id: {status: present, at: [staging.messages.message_id]}
+      channel: {status: present, at: [staging.messages.channel]}
+      template_id + template_version: {status: present, at: [staging.messages.template_id, staging.templates.template_id], note: "the registry keeps one version per template"}
+      sender_id: {status: not_needed, reason: "CLI-01 covers calls; no sender-number check for messages"}
+      sent_ts_utc / delivered_ts_utc / read_ts_utc: {status: present, at: [staging.messages.sent_ts_utc], note: "delivery and read times are not read by any check"}
+      consent_id_at_send: {status: not_captured, reason: "the message log does not record which consent it relied on; the check re-derives consent from the registry (CN backlog item 5)"}
+      content_hash: {status: not_captured, reason: "the message log does not hold a hash of the rendered text (CN backlog item 5)"}
+      initiated_by: {status: not_needed, reason: "no check reads it"}
+    flags:
+      F_CONSENT_VALID_AT_SEND: {status: derived, by: consent_before_contact, from: [staging.consents.effective_ts_utc, staging.messages.sent_ts_utc]}
+      F_TEMPLATE_APPROVED_AT_SEND: {status: derived, by: template_approval, from: [staging.templates.approval_status, staging.templates.approved_at, staging.templates.retired_at]}
+      F_IN_HOURS: {status: not_needed, reason: "D12 applies hours to calls only"}
+      F_REGISTERED_SENDER: {status: not_needed, reason: "CLI-01 is about calls; there is no registered sender list for messages"}
+      F_BORROWER_DAY_SEQ: {status: not_needed, reason: "D12 caps calls, not messages"}
+
+  notice:
+    fields:
+      notice_id: {status: present, at: [staging.notices.notice_id]}
+      notice_type: {status: present, at: [staging.notices.notice_type]}
+      trigger_event + trigger_date: {status: present, at: [staging.notices.trigger_date]}
+      due_by_date: {status: derived, by: notice_timeline, from: [staging.notices.trigger_date, staging.holidays.holiday_date, staging.policy_rules.rule_value]}
+      borrower_state: {status: present, at: [staging.notices.borrower_state]}
+      dispatch_ts_utc: {status: present, at: [staging.notices.dispatch_date], note: "a date, not a timestamp"}
+      mode: {status: present, at: [staging.notices.dispatch_mode]}
+      tracking_ref: {status: not_captured, reason: "no AWB or consignment number"}
+      service_date: {status: present, at: [staging.notices.served_date]}
+      pod_document_id: {status: not_captured, reason: "no proof-of-delivery document"}
+      rto_reason: {status: not_needed, reason: "no check reads it"}
+      address_id_used: {status: not_needed, reason: "no check reads it"}
+    flags:
+      F_DISPATCHED_ON_TIME: {status: derived, by: notice_timeline, from: [staging.notices.dispatch_date]}
+      F_SERVED_ON_TIME: {status: derived, by: notice_timeline, from: [staging.notices.served_date]}
+      F_POD_PRESENT: {status: not_captured, reason: "no proof-of-delivery document"}
+      F_HOLIDAY_ADJUSTED: {status: derived, by: notice_timeline, from: [staging.holidays.holiday_date, staging.holidays.scope]}
+
+  payment:
+    fields: {_all: {status: not_in_scope, reason: "this dataset has no collections payments (the payment feed was removed: no check reads it)"}}
+    flags: {_all: {status: not_in_scope, reason: "this dataset has no collections payments"}}
+
+masters:
+  collector_master:
+    collector_id: {status: present, at: [staging.collectors.user_id, staging.collectors.employee_code], for: [CRT-01, AGT-01]}
+    agency_id + role: {status: present, at: [staging.collectors.agency_code], note: "the role was not read by any check and was removed", for: [CLI-01]}
+    status_history (active | inactive | terminated, valid_from, valid_to): {status: present, at: [staging.collector_status.status, staging.collector_status.valid_from, staging.collector_status.valid_to], note: "added in V018", for: [AGT-01, ACC-01]}
+    dra_cert_no + valid_from + valid_to: {status: present, at: [staging.certifications.certificate_no, staging.certifications.valid_from, staging.certifications.valid_to], for: [CRT-01]}
+    police_verification_date / rcu_status: {status: not_captured, reason: "no police verification records; CRT-02 is not built", for: [CRT-02]}
+    training_records (type, completed_on): {status: not_captured, reason: "no training records; CRT-03 is not built", for: [CRT-03]}
+    id_card_issued_on / returned_on: {status: not_needed, reason: "no check reads it", for: []}
+    lender_portfolio_assignments (lender, valid_from, valid_to): {status: not_captured, reason: "no portfolio assignment per collector; AGT-02 is not built", for: [AGT-02]}
+    registered_clis / devices: {status: present, at: [staging.registered_clis.cli_number, staging.registered_clis.agency_code, staging.registered_clis.valid_from, staging.registered_clis.valid_to], note: "added in V018", for: [CLI-01]}
+  contact_consent_master:
+    contact (number_hash, source, relation, added_at): {status: present, at: [staging.call_sessions.contact_source, staging.call_sessions.contact_type], for: [CNT-01]}
+    consent (channel, purpose, captured_at, method, artefact_id, revoked_at): {status: present, at: [staging.consents.channel, staging.consents.purpose, staging.consents.status, staging.consents.effective_ts_utc, staging.consents.capture_source], note: "revocation is a later REVOKED event; no artefact id", for: [CNS-01]}
+    preference (no_call_window / channel / place, valid_from, valid_to, origin_event_id): {status: not_captured, reason: "no contact-preference records; FRQ-02 is not built", for: [FRQ-02]}
+    addresses (type, geocode, state): {status: present, at: [cn_core.customer_address.address_type, cn_core.customer_address.state], note: "no geocode: field visits are not in this dataset", for: [NOT-01, VIS-01]}
+  allocation:
+    account_id: {status: present, at: [staging.accounts.account_id], for: [COV-01]}
+    agency_id / tl_id / collector_id: {status: not_captured, reason: "no allocation history; each call carries its own agency and collector. COV-01, NOT-02 and AGT-02 are not built", for: [COV-01, NOT-02, AGT-02]}
+    valid_from / valid_to: {status: not_captured, reason: "no allocation history", for: [COV-01, NOT-02, AGT-02]}
+
+system_logs:
+  access_log (login, logout, disable events per user): {status: not_captured, reason: "no access log; ACC-01 is not built"}
+  recording_store_inventory (count by month, purge events): {status: available, at: [staging.recordings.storage_status, staging.call_sessions.started_ts_utc], note: "REC-03 is not built; a per-month count can be derived"}
+  rule_config_history (D12 params by version): {status: present, at: [staging.policy_rules.policy_code, staging.policy_rules.effective_from, staging.policy_rules.effective_to]}
+  template_registry_history (approved_at, retired_at): {status: present, at: [staging.templates.approved_at, staging.templates.retired_at], note: "added in V018"}

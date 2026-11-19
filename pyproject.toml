@@ -50,3 +50,5 @@ select = ["E", "F", "I"]
 "tests/*.py" = ["E501"]
 "agent/tools/*.py" = ["E501"]  # docstrings that describe the rows
 "scripts/gen_*.py" = ["E501"]  # data generators
+"scripts/make_prune_migration.py" = ["E501"]
+"scripts/retired.py" = ["E501"]

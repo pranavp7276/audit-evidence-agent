@@ -54,7 +54,9 @@ def test_every_trap_names_the_words_the_checks_actually_write():
     root = pathlib.Path(__file__).resolve().parents[1] / "agent" / "checks"
     source = {p.stem: p.read_text(encoding="utf-8") for p in root.glob("*.py")}
     where = {"consent_before_contact": "consent_before_contact", "calling_hours": "calling_hours_frequency", "recording_completeness": "recording_completeness",
-             "agent_certification": "agent_certification", "verification_before_disclosure": "verification_before_disclosure", "notice_timeline": "notice_timeline"}
+             "agent_certification": "agent_certification", "verification_before_disclosure": "verification_before_disclosure", "notice_timeline": "notice_timeline",
+             "template_approval": "template_approval", "collector_active": "collector_active", "caller_id_registered": "caller_id_registered",
+             "third_party_disclosure": "third_party_disclosure"}
     for key, check_type, _status, text, _label, _why in TRAPS:
         files = [source[where[check_type]]] if check_type else list(source.values())
         needles = ["(logged", "'outside'", "the permitted"] if key == "timezone" else [text]  # the hours reason is built from pieces

@@ -2,7 +2,7 @@
 
   python scripts/migrate.py            apply pending versioned migrations (db/migrations/V*.sql)
   python scripts/migrate.py --staging  (re)apply repeatable staging scripts (db/staging/R__*.sql)
-  python scripts/migrate.py --reset    drop raw/staging/audit and the history table
+  python scripts/migrate.py --reset    drop every schema this project owns and the history table
 
 Versioned migrations are append-only. Once applied anywhere, a file must never change:
 the runner stores each file's checksum and refuses to continue if it differs. To change
@@ -116,10 +116,10 @@ def reset(conn) -> None:
         sys.exit(f"Refusing to reset non-local database host '{url}'. "
                  "Set ALLOW_REMOTE_RESET=1 if you really mean it.")
     with conn.transaction():
-        for schema in ("audit", "staging", "raw"):
+        for schema in ("audit", "staging", "book", "compliance", "cn_core", "uamdb", "raw"):
             conn.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
         conn.execute("DROP TABLE IF EXISTS public.schema_history")
-    print("  dropped raw, staging, audit and schema_history")
+    print("  dropped the project schemas and schema_history")
 
 
 def main() -> None:

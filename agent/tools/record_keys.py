@@ -13,7 +13,7 @@ KEY_EXPR = {
     "compliance.customer_consent": "consent_id::text", "compliance.call_recording": "recording_id::text",
     "compliance.call_transcript_segment": "segment_id::text", "compliance.calling_policy_rule": "rule_id::text",
     "compliance.holiday_calendar": "holiday_id::text", "compliance.notice": "notice_id::text",
-    "compliance.collector_certification": "cert_id::text", "uamdb.users": "user_id::text",
+    "compliance.collector_certification": "cert_id::text", "uamdb.users": "user_id::text", "compliance.collector_status": "status_id::text", "compliance.registered_cli": "cli_id::text",
 }
 CHUNK = 400
 

@@ -1,7 +1,7 @@
 import { api, esc, num, fdate, help, badge, rulebookNav } from "../core.js";
 
 export async function rulesPage(el, standalone, runId, done) {
-  const [r, src] = await Promise.all([api("/api/rules"), api("/api/data-sources")]);
+  const [r, src, cov] = await Promise.all([api("/api/rules"), api("/api/data-sources"), api("/api/evidence-coverage").catch(() => null)]);
   const pol = {}; r.policy.forEach((p) => (pol[p.rule_key] ||= []).push(p));
   const LENDER = { BANK01: "Sahyadri Bank", NBFC01: "Kaveri Finserv", MFI01: "Ganga Microfinance" };
   const when_ = (p) => (p.effective_to ? `${fdate(p.effective_from)} to ${fdate(p.effective_to)}` : `from ${fdate(p.effective_from)}`);
@@ -19,5 +19,21 @@ export async function rulesPage(el, standalone, runId, done) {
       <p class="small muted">These are the platform's current interpretations. If your engagement requires a different one, tell the platform owners before relying on the result.</p></div>
     <div class="card"><h2>Data the platform reads</h2><table><thead><tr><th>Source</th><th class="num">Records</th><th>From</th><th>To</th><th>Source time zone</th></tr></thead><tbody>
       ${src.map((s) => `<tr><td>${esc(s.source)}</td><td class="num">${num(s.rows)}</td><td class="small">${s.first ? esc(String(s.first).slice(0, 10)) : "—"}</td><td class="small">${s.last ? esc(String(s.last).slice(0, 10)) : "—"}</td><td class="small">${esc(s.timezone)}</td></tr>`).join("")}</tbody></table>
-      <p class="small muted">Every timestamp is compared in UTC; the original value is shown beside it wherever it is cited.</p></div>`;
+      <p class="small muted">Every timestamp is compared in UTC; the original value is shown beside it wherever it is cited.</p></div>${coverageCard(cov)}`;
+}
+
+const STATE_CLS = { runs: "b-completed", partly: "b-cannot_determine", "data ready, not built": "b-draft", "not built": "b-draft" };
+
+/* The tag spec checked against the database: which checks have every tag they need, and what the source systems do not capture. */
+function coverageCard(cov) {
+  if (!cov) return "";
+  const c = cov.counts, L = cov.labels;
+  return `<div class="card"><h2>Evidence tags: what the system captures</h2>
+    <p class="small muted">Each check needs certain facts on the records it reads (config/evidence_tags.yaml). This is that spec checked against the database: ${cov.build.runs} of ${cov.build.total} catalog checks run with every tag they need.
+      ${Object.keys(L).map((k) => `<span class="tag">${esc(L[k])}: ${num(c[k])}</span>`).join(" ")}</p>
+    ${cov.problems.length ? `<div class="err">${cov.problems.map(esc).join("<br>")}</div>` : ""}
+    <table><thead><tr><th>Check</th><th>Name</th><th>Result</th><th>Tags missing in the source system</th></tr></thead><tbody>
+      ${cov.checks.map((k) => `<tr><td class="mono">${esc(k.id)}</td><td>${esc(k.name)}</td><td><span class="badge ${STATE_CLS[k.state] || ""}">${esc(k.state)}</span></td><td class="small">${k.missing.length ? k.missing.map((m) => esc(m.name)).join("; ") : "<span class=muted>none</span>"}</td></tr>`).join("")}</tbody></table>
+    <details><summary>${cov.not_captured.length} tags the source systems do not capture</summary><table><tbody>${cov.not_captured.map((t) => `<tr><td>${esc(t.name)}</td><td class="small muted">${esc(t.reason)}</td></tr>`).join("")}</tbody></table></details>
+    <details><summary>${cov.not_needed.length} tags in the spec that are deliberately not stored</summary><table><tbody>${cov.not_needed.map((t) => `<tr><td>${esc(t.name)}</td><td class="small muted">${esc(t.reason)}</td></tr>`).join("")}</tbody></table></details></div>`;
 }

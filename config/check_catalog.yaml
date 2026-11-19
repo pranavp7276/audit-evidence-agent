@@ -1,0 +1,506 @@
+# Audit check catalog — derived from real lender/QA documents
+# Sources (in docs/reference/sources/):
+#   CHK = Collection_Audit_Checklist.docx  (lender vendor code of conduct for collection agencies)
+#   QM  = Quality_Monitoring_Functional_Parameters.xlsx (call QA scorecard, sheet "Legends", row refs e.g. QM:B6)
+#   RBI = RBI circular RBI/2022-23/108, 12 Aug 2022 (recovery agents: no calls before 08:00 / after 19:00)
+#   VAD = Virtual_Audit_Document_Details.docx (lender's agency-level document/premises checklist, 30 items, ref VAD#n)
+#   MVA = MONEYVIEW_AUDIT_CHECKSHEET.xlsx (lender's scored agency audit, 47 items, weights sum to 100; filled by an agency — ref MVA#n)
+#
+# ATTESTATION IS NOT EVIDENCE (lesson from MVA, which is filled in by the agency):
+#   remarks like "dialler blocks calls before 8 AM" or "everything dialled through dialler" are claims.
+#   The agent must still test HRS-01 / CLI-01 against the contact log. An "NA" (e.g. "No Field")
+#   is also a testable claim: query the log for field visits before accepting it.
+#   In letters write Compliant / Gap / Cannot determine — never bare Yes/No (MVA#33 shows "No" on a
+#   negatively-worded item, which is ambiguous).
+#
+# REQUEST TRIAGE — every question in an audit request is one of:
+#   account_check     -> per sampled account, tested against data (section `checks`)
+#   vendor_document   -> agency-level artefact (section `vendor_document_requests`); not in our data,
+#                        so list it as "to be supplied by agency", verdict cannot_determine — never evidenced
+#   not_testable      -> no system of record (section `not_testable_from_systems`)
+#
+# HOW TO USE
+# - The planner maps each question in an audit request to one or more check_ids below.
+# - Rule PARAMETERS (hours, caps) must be read from D12 at run time. Values under `defaults`
+#   are fallbacks only; if D12 differs, D12 wins and the pack should note the difference.
+# - Severity: always grade on the severity scale shipped WITH the request. `severity_hint`
+#   is only used when the request's scale doesn't cover a check.
+# - Every verdict is one of: evidenced | gap | cannot_determine, and must cite record IDs.
+#   Never emit "evidenced" without at least one cited record.
+
+version: 1
+
+precedence:
+  - audit_request          # wording, sample, period and severity scale of THIS request
+  - D12                    # calling hours / frequency limits (per problem statement)
+  - lender_policy_defaults # CHK values below
+  - regulator_baseline     # RBI 2022 circular
+
+defaults:
+  timezone: Asia/Kolkata   # normalise every source timestamp to IST before testing
+  calling_window:
+    start: "08:00"
+    end: "19:00"
+    source: [CHK, RBI, "QM n/a"]
+  daily_call_cap_by_dpd:   # CHK "Call Limits"
+    - {dpd_min: 0,  dpd_max: 30,   max_calls_per_day: 10}
+    - {dpd_min: 31, dpd_max: null, max_calls_per_day: 20}
+
+verdicts:
+  evidenced: "Record(s) found AND they prove the point (correct order, correct date, in window)."
+  gap: "Record(s) found and they show a breach, OR a required record is missing where the source is otherwise complete for that account/period."
+  cannot_determine: "Source unavailable/ambiguous (e.g. no transcript for the call, tz unknown). Never upgraded to evidenced."
+  not_applicable: "No in-scope events for the account in the period; must cite the zero-row query (OD-8)."
+
+open_decisions:   # settle with the team; then hard-code in tests
+  - id: OD-1
+    question: "Is 19:00:00 itself inside the window? Is the test on call START time only?"
+    suggestion: "Test call initiation time in IST: 08:00:00 <= start < 19:00:00. Log calls that start inside but run past 19:00 as info, not gap."
+  - id: OD-2
+    question: "Does the daily cap count attempts (dialed) or connected calls?"
+    suggestion: "Read from D12 wording; if silent, count attempts (stricter) and say so in the pack."
+  - id: OD-3
+    question: "DPD for the cap — DPD on the call date or at allocation?"
+    suggestion: "DPD as of the call date from warehouse; cannot_determine if missing."
+  - id: OD-4
+    question: "Missing recording for one call in a series — gap on REC-01 only, or also cannot_determine on VER-01/REC-02 for that call?"
+    suggestion: "Both: REC-01 = gap; transcript-based checks for that call = cannot_determine (never evidenced)."
+
+  - id: OD-5
+    question: "How late can a visit outcome be captured before it counts as back-filled?"
+    suggestion: "Same IST day; flag info if later, gap only if missing."
+  - id: OD-6
+    question: "Geo-tag radius for VIS-02?"
+    suggestion: "Start at 500 m; make configurable per lender."
+  - id: OD-7
+    question: "Deposit TAT for field cash/cheque (PAY-01)?"
+    suggestion: "T+1 working day using the holiday calendar; confirm with lender policy."
+
+  - id: OD-8
+    question: "Account has no in-scope events for a check (e.g. no WhatsApp messages in the period)?"
+    suggestion: "Verdict not_applicable, cite the zero-row query (hash + run_id), report separately, score as non-gap; confirm against public gap keys."
+checks:
+  # ---------------- Contact rules (system-evidenceable) ----------------
+  - id: HRS-01
+    name: Calls within permitted hours
+    applies_to: [call, visit, message]
+    engine: deterministic
+    rule: "Every collection call/visit attempt starts within the calling window (IST)."
+    origin: ["CHK: Contact Guidelines - 8:00 AM to 7:00 PM", "CHK: Code of Conduct - Timing", "MVA#36", "RBI 2022"]
+    params_from: D12
+    evidence_sources: [contact_log, D12]
+    test: "Normalise call_start to IST (source tz differs by design) -> compare to window."
+    pitfalls: ["UTC vs IST between systems", "dialer vs CRM timestamps disagreeing", "date rollover at midnight UTC"]
+    notes: "RBI window is for calls; CHK applies it to visits (Code of Conduct - Timing). Apply to messages only if D12/request says so."
+    severity_hint: high
+
+  - id: FRQ-01
+    name: Daily call frequency within cap
+    applies_to: [call]
+    engine: deterministic
+    rule: "Calls per borrower per IST calendar day <= cap for the DPD bucket."
+    origin: ["CHK: Call Limits (<=30 DPD: 10/day; >30 DPD: 20/day)", "MVA#37: no persistent calling attempts", "RBI: no persistent calling"]
+    params_from: D12
+    evidence_sources: [contact_log, warehouse_dpd, D12]
+    test: "Group by account + IST date (after tz normalisation); compare count to cap for DPD on that date."
+    pitfalls: ["counting across tz boundary", "multiple numbers for same borrower must aggregate per borrower"]
+    severity_hint: high
+
+  - id: FRQ-02
+    name: Customer contact-preference requests honoured
+    applies_to: [call, visit, message]
+    engine: hybrid
+    rule: "No contact at times/places/channels the customer asked to avoid."
+    origin: ["CHK: Customer Requests"]
+    evidence_sources: [contact_log, transcripts, crm_remarks]
+    test: "If a do-not-call-at / preference record or transcript request exists, later contacts must respect it."
+    notes: "Only test if the request asks or if a preference record exists; else cannot_determine."
+    severity_hint: medium
+
+  - id: CNS-01
+    name: Consent before WhatsApp / digital message
+    applies_to: [message]
+    engine: deterministic
+    rule: "A valid consent record exists with captured_at < first message sent_at (same channel, not revoked)."
+    origin: ["Problem statement; CHK: respect privacy"]
+    evidence_sources: [consent_registry, template_registry, contact_log]
+    test: "Compare consent timestamp to EACH message timestamp after tz normalisation; consent dated after first message = gap for that message."
+    pitfalls: ["late consent seeded by design", "consent for SMS != consent for WhatsApp", "revocation before message"]
+    severity_hint: high
+
+  - id: TPL-01
+    name: Messages sent only on pre-approved templates
+    applies_to: [message, notice]
+    engine: deterministic
+    rule: "Every outbound message uses a template that was approved (and active) at sent_at."
+    origin: ["MVA#46: all communication templates approved by LSP", "MVA#47: no communication without pre-approved templates"]
+    evidence_sources: [contact_log, template_registry]
+    test: "Join message -> template_id -> registry; approved_at <= sent_at < retired_at (IST). Free-text / unknown template = gap."
+    severity_hint: high
+
+  - id: CLI-01
+    name: Calls placed only from registered numbers / dialer
+    applies_to: [call]
+    engine: deterministic
+    rule: "Caller ID (CLI) of every call is in the agency's registered number list for this lender; no personal mobiles."
+    origin: ["MVA#33: no calls through personal unregistered numbers", "MVA#41: 1600-series numbers used only on this lender's portfolio", "MVA#15: channel used exclusively for collections"]
+    evidence_sources: [contact_log, D12]
+    notes: "Only if the log carries CLI/source number and a registered list exists; else cannot_determine."
+    severity_hint: high
+
+  - id: CNT-01
+    name: Non-borrower-provided contacts handled per code
+    applies_to: [call]
+    engine: hybrid
+    rule: "Calls to numbers not provided by the borrower (reference/alternate/skip-traced) never disclose dues and are within allowed purposes."
+    origin: ["MVA#39: CCOC adherence for non-first-party provided contact", "CHK: Confidentiality"]
+    evidence_sources: [contact_log, transcripts, warehouse_contacts]
+    test: "Flag calls where dialled number not in borrower's own contacts; for those, any dues disclosure = gap (links VER-01)."
+    severity_hint: high
+
+  - id: AGT-01
+    name: Collector active (not terminated / inactive) on call date
+    applies_to: [call, visit]
+    engine: deterministic
+    rule: "Collector's roster status is active on the call date; no calls after exit/termination."
+    origin: ["MVA#22-24: terminated agents' logs, LSP intimation, access removed", "MVA#26: ID deletion of inactive collectors"]
+    evidence_sources: [collector_roster, contact_log]
+    notes: "Natural companion to CRT-01; test both on every call."
+    severity_hint: high
+
+  - id: AGT-02
+    name: Collector not shared across other lenders' portfolios
+    applies_to: [collector]
+    engine: deterministic
+    rule: "A collector ID calling this lender's accounts is not also assigned to another lender/NBFC portfolio in the same period."
+    origin: ["MVA#16: no shared agents or tele-callers"]
+    evidence_sources: [collector_roster]
+    notes: "Candidate — only if roster carries portfolio/lender assignment."
+    severity_hint: medium
+
+  # ---------------- Call conduct (transcript / recording) ----------------
+  - id: REC-01
+    name: Recording exists for each call
+    applies_to: [call]
+    engine: deterministic
+    rule: "Every connected call in the contact log has a recording in the store."
+    origin: ["QM:B5 (recording disclaimer implies recorded calls)", "Problem statement: missing recordings seeded"]
+    evidence_sources: [contact_log, recording_store]
+    test: "Left-join contact_log connected calls -> recording_store on call_id; missing = gap."
+    severity_hint: high
+
+  - id: REC-03
+    name: Recording retention covers the audit period
+    applies_to: [period]
+    engine: deterministic
+    rule: "Recordings exist for every month of the period asked (VAD asks for latest 6 months, month-wise)."
+    origin: ["VAD#19: call recordings latest 6 months month-wise storage", "MVA#34-35: call logs and recordings for last 180 days", "MVA#30: recordings kept separately per lender, purged after 6 months"]
+    evidence_sources: [recording_store, contact_log]
+    test: "Per month in period: connected calls in log vs recordings found; a month with calls but zero/low recordings = gap."
+    severity_hint: high
+
+  - id: REC-02
+    name: Recording disclaimer given
+    applies_to: [call]
+    engine: transcript_llm
+    rule: "Agent informs the customer the call is recorded."
+    origin: ["QM:B5 Quality Disclaimer - Fatal"]
+    evidence_sources: [transcripts]
+    severity_hint: critical
+
+  - id: IDN-01
+    name: Agent identified self and company
+    applies_to: [call]
+    engine: transcript_llm
+    rule: "Agent states own name and that they are calling on behalf of the lender."
+    origin: ["CHK: Professional Conduct - identify yourself", "QM:B3 (wt 4)", "QM:B4 (Fatal)", "MVA#40a: state company + lender name"]
+    evidence_sources: [transcripts]
+    severity_hint: high
+
+  - id: VER-01
+    name: Identity verified before dues disclosed
+    applies_to: [call]
+    engine: hybrid
+    rule: "Right-party confirmation occurs BEFORE the first mention of dues / EMI / outstanding / loan account. No dues disclosed to a third party."
+    origin: ["QM:B6 Right/Third Party Contact - confirm by prefix & last name", "QM:B7 Purpose of Call (dues vs loan a/c)", "MVA#40b: verify correct customer before discussing dues", "CHK: Confidentiality, respect privacy"]
+    evidence_sources: [transcripts, recording_store]
+    test: "Find turn index of RPC confirmation and of first dues disclosure; rpc_turn < disclosure_turn => evidenced. Disclosure with no RPC, or to a TPC => gap. No transcript => cannot_determine."
+    severity_hint: high
+
+  - id: CND-01
+    name: No threats, intimidation, abuse
+    applies_to: [call]
+    engine: transcript_llm
+    rule: "No threatening, humiliating, sarcastic or abusive language."
+    origin: ["CHK: No Intimidation; Speech Do-Nots", "QM:B28 (Fatal)", "MVA#40c", "RBI 2022"]
+    evidence_sources: [transcripts]
+    severity_hint: critical
+
+  - id: CND-02
+    name: No false information / unauthorised commitments
+    applies_to: [call]
+    engine: transcript_llm
+    rule: "No false statements, no promises of waivers/settlements outside agent authority."
+    origin: ["CHK: Ethics", "QM:B15 Wrong Information/False Commitment (Fatal)", "MVA#40d: correct info, no false promises", "RBI: false and misleading representations"]
+    evidence_sources: [transcripts]
+    severity_hint: critical
+
+  - id: CND-03
+    name: Payment only via authorised bank channels
+    applies_to: [call, visit, payment]
+    engine: hybrid
+    rule: "Agent never asks for payment into a personal/agency bank account, e-wallet or UPI ID."
+    origin: ["CHK: no collection into personal or agency account", "VAD#4: cash/cheque annexure with bank deposit slip"]
+    evidence_sources: [transcripts, payment_records]
+    severity_hint: critical
+
+  - id: CND-04
+    name: Sensitive occasions avoided
+    applies_to: [call]
+    engine: transcript_llm
+    rule: "No collection push after the customer mentions bereavement or similar."
+    origin: ["CHK: Avoid sensitive occasions"]
+    evidence_sources: [transcripts]
+    notes: "Only test when asked; flag for human review rather than auto-gap."
+    severity_hint: medium
+
+  - id: DSP-01
+    name: Disposition consistent with conversation
+    applies_to: [call, visit]
+    engine: hybrid
+    rule: "Every call is disposed, and the disposition in the contact log matches what happened on the call (e.g. PTP tagged only if PTP given)."
+    origin: ["QM:B22 Disposition (Fatal)", "QM:B21 Field & Remark Updation major (Fatal)", "MVA#12: disposition dump with quality remarks"]
+    evidence_sources: [contact_log, transcripts]
+    notes: "QM marks this 'cannot be covered from recording alone' — the audit agent CAN test it by cross-checking log vs transcript."
+    severity_hint: medium
+
+  # ---------------- Agent & notices ----------------
+  - id: CRT-01
+    name: Collector certified on the call date
+    applies_to: [call, visit]
+    engine: deterministic
+    rule: "valid_from <= call_date(IST) <= valid_to in the certification register for the collector ID on the call."
+    origin: ["CHK: Belongings - Identity card", "VAD#20: DRA certificate per vendor staff", "VAD#3, VAD#26: agent / ID card register", "MVA#3: DRA certified/trained (field)", "MVA#25: ID cards and digital ID", "Problem statement: some certificates expired before calls"]
+    notes: "In Indian collections the certificate is typically the DRA (Debt Recovery Agent) certification — expect the register to carry it."
+    evidence_sources: [contact_log, certification_register, collector_roster]
+    pitfalls: ["call_date must be taken AFTER tz normalisation", "renewed certificates: pick the one covering the date, not the latest"]
+    severity_hint: high
+
+  - id: ACC-01
+    name: Terminated / inactive collector access revoked
+    applies_to: [collector]
+    engine: deterministic
+    rule: "System login and data/device access disabled on or before the collector's exit date; no logins or activity after it."
+    origin: ["MVA#22-24: terminated agents' logs, LSP intimation, access removed", "MVA#26: ID deletion of inactive collectors"]
+    evidence_sources: [collector_roster, access_logs]
+    severity_hint: high
+
+  - id: COV-01
+    name: Every allocated account has activity trails
+    applies_to: [account]
+    engine: deterministic
+    rule: "Each account allocated to the agency in the period has at least one logged activity (call/visit/message) with a disposition."
+    origin: ["MVA#13: trails update against total accounts allocated", "MVA#11: performance vs allocation tracker"]
+    evidence_sources: [allocation, contact_log]
+    severity_hint: low
+
+  - id: CRT-02
+    name: Collector police verification on file before deployment
+    applies_to: [collector]
+    engine: deterministic
+    rule: "Police verification date <= collector's first call/visit on the process."
+    origin: ["VAD#20: police verification certificate per vendor staff", "MVA#27: hiring with positive RCU check"]
+    evidence_sources: [collector_roster, certification_register, contact_log]
+    notes: "Candidate — only if the roster/register carries a police-verification field; else cannot_determine."
+    severity_hint: high
+
+  - id: CRT-03
+    name: Collector trained before calling
+    applies_to: [collector]
+    engine: deterministic
+    rule: "Latest lender training (classroom/online) completed before the call date; monthly banker training maintained."
+    origin: ["VAD#23: training completion attendance", "VAD#30: monthly training by Collection Manager", "MVA#31, MVA#38: CCOC training/briefing, regular training"]
+    evidence_sources: [certification_register, collector_roster]
+    notes: "Candidate — only if training dates exist in the data."
+    severity_hint: medium
+
+  # ---------------- Field visits & collections ----------------
+  - id: VIS-02
+    name: Field visit outcome documented
+    applies_to: [visit]
+    engine: deterministic
+    rule: "Every field visit has a recorded outcome/disposition and remark, captured by the collector on the visit (not back-filled days later)."
+    origin: ["CHK: Maximize Effectiveness - document result of visit/action taken", "MVA#14: field app used while performing field visits"]
+    evidence_sources: [visit_log]
+    test: "Outcome present AND captured_at within the same IST day as visit_at (lag threshold = OD-5)."
+    severity_hint: medium
+
+  - id: VIS-01
+    name: Field visit location evidenced
+    applies_to: [visit]
+    engine: deterministic
+    rule: "Visit carries a geo-tag (and photo if the process requires) at or near a borrower address or a customer-chosen location."
+    origin: ["CHK: Contact Guidelines - customer's chosen location, else residence/workplace", "MVA#14: field app used for field audits"]
+    evidence_sources: [visit_log, warehouse_addresses]
+    test: "geo present -> distance to nearest borrower address <= radius (OD-6); no geo = cannot_determine, far = gap. Makes HRS-01/CRT-01 on visits trustworthy."
+    severity_hint: medium
+
+  - id: PAY-01
+    name: Field collection receipted and deposited via bank
+    applies_to: [payment]
+    engine: deterministic
+    rule: "Every cash/cheque collected in the field has a system receipt to the borrower and a bank deposit slip within the deposit TAT."
+    origin: ["VAD#4: cash/cheque annexure with bank deposit slip", "CHK: collections only via authorised bank channels"]
+    evidence_sources: [payment_records, visit_log]
+    test: "receipt_no present; deposit_ref present; deposit_at - collected_at <= TAT (OD-7). Collection with no receipt = gap."
+    severity_hint: critical
+
+  - id: NOT-01
+    name: Notices served on time
+    applies_to: [notice]
+    engine: deterministic
+    rule: "Service date within the required number of days, counted per the request/D12 (working days exclude holiday calendar)."
+    origin: ["CHK: Transparency - provide necessary notices", "Problem statement"]
+    evidence_sources: [dispatch_tracker, holiday_calendar]
+    pitfalls: ["national vs state holidays (use borrower's state)", "dispatch date != service date"]
+    severity_hint: high
+
+  - id: NOT-02
+    name: Agency appointment notice sent before agency contact
+    applies_to: [notice]
+    engine: deterministic
+    rule: "Borrower was notified of the collection agency appointment before that agency first contacted them."
+    origin: ["CHK: Belongings - copy of notice to borrower related to collection agency appointment"]
+    evidence_sources: [dispatch_tracker, contact_log]
+    notes: "Candidate check — use only if a request asks about agency allocation/appointment notices."
+    severity_hint: medium
+
+# Items in CHK that have no system of record. If a request asks about them, mark
+# cannot_determine and say so plainly in the response letter — never claim compliance.
+not_testable_from_systems:
+  - {item: "Appearance / dress code", origin: "CHK: Code of Conduct"}
+  - {item: "Proximity / physical contact on field visits", origin: "CHK: Code of Conduct"}
+  - {item: "Preferred visit location (residence/workplace)", origin: "CHK: Contact Guidelines"}
+  - {item: "Personal benefits to bank employees", origin: "CHK: Strict Prohibition on Personal Benefits"}
+  - {item: "Pre-visit preparation / visit effectiveness", origin: "CHK: Maximize Effectiveness"}
+
+# Agency-level artefacts a lender asks for in a virtual/premises audit (VAD, 30 items; the
+# source numbers 1-32 because item 4 wraps over two lines plus a blank — refs below are the
+# true item order). Trailing "Ok"/"FE TL Ok" in the source are someone's tick marks, ignored.
+# in_our_data: whether the hackathon datasets can evidence it. If no -> cannot_determine and
+# list under "Documents to be provided by the agency" in the response letter.
+# validity: the attribute an auditor checks on the artefact (expiry / retention / coverage).
+vendor_document_requests:
+  - {ref: 1,  item: "Vendor agreement / complete SOW", form: scan, category: contract, in_our_data: no}
+  - {ref: 2,  item: "Vendor name board with address", form: image, category: premises, in_our_data: no}
+  - {ref: 3,  item: "Agent register / staff ID card register for the process", form: image, category: people, in_our_data: partial, maps_to: CRT-01, note: "collector roster can evidence who was registered"}
+  - {ref: 4,  item: "Cash/cheque annexure with bank deposit slip (else 'Not Applicable')", form: image, category: collections, in_our_data: partial, maps_to: [CND-03, PAY-01]}
+  - {ref: 5,  item: "Latest agency performance letter for portfolio", form: scan, category: contract, in_our_data: no}
+  - {ref: 6,  item: "Data-sharing apps, social media, external email blocked", form: screenshot, category: it_security, in_our_data: no}
+  - {ref: 7,  item: "Latest NDC (No Due Certificate)", form: scan, category: contract, in_our_data: no}
+  - {ref: 8,  item: "Latest data purging letter", form: scan, category: data_protection, in_our_data: no}
+  - {ref: 9,  item: "Windows 10 on vendor PCs", form: screenshot, category: it_security, in_our_data: no}
+  - {ref: 10, item: "WinZip version 9+ on vendor PCs", form: screenshot, category: it_security, in_our_data: no}
+  - {ref: 11, item: "Fidelity insurance", form: scan, category: legal, in_our_data: no, validity: "policy period covers audit period"}
+  - {ref: 12, item: "USB ports blocked", form: screenshot, category: it_security, in_our_data: no}
+  - {ref: 13, item: "Vendor registered e-mail ID", form: screenshot, category: it_security, in_our_data: no}
+  - {ref: 14, item: "Anti-virus with licence validity date", form: screenshot, category: it_security, in_our_data: no, validity: "licence valid on audit date"}
+  - {ref: 15, item: "Fire extinguisher next refill / validity date", form: image, category: premises, in_our_data: no, validity: "not expired"}
+  - {ref: 16, item: "GST certificate", form: scan, category: legal, in_our_data: no}
+  - {ref: 17, item: "Lock & storage facility for the process", form: image, category: premises, in_our_data: no}
+  - {ref: 18, item: "Visitor register (lender manager register)", form: image, category: premises, in_our_data: no}
+  - {ref: 19, item: "Call recordings, latest 6 months, month-wise storage (else 'Not Applicable' if no telecaller profile)", form: screenshot, category: recordings, in_our_data: yes, maps_to: REC-03, validity: "6 months, every month present"}
+  - {ref: 20, item: "Police verification + DRA certificate per vendor staff", form: scan, category: people, in_our_data: partial, maps_to: [CRT-01, CRT-02]}
+  - {ref: 21, item: "Shop & Establishment certificate", form: scan, category: legal, in_our_data: no}
+  - {ref: 22, item: "BCP (Business Continuity Plan)", form: document, category: legal, in_our_data: no}
+  - {ref: 23, item: "Latest lender training (classroom/online) attendance", form: document, category: people, in_our_data: partial, maps_to: CRT-03}
+  - {ref: 24, item: "Vendor PC usernames assigned to process ID-card holders (Supervisor/TL/TC)", form: screenshot, category: it_security, in_our_data: no}
+  - {ref: 25, item: "Vendor PC Control Panel complete", form: screenshot, category: it_security, in_our_data: no}
+  - {ref: 26, item: "Vendor staff / agency ID card", form: image, category: people, in_our_data: partial, maps_to: CRT-01}
+  - {ref: 27, item: "Access-controlled gate", form: image, category: premises, in_our_data: no}
+  - {ref: 28, item: "Registered e-mail configured in Outlook", form: screenshot, category: it_security, in_our_data: no}
+  - {ref: 29, item: "CCTV with 45 days storage", form: image, category: premises, in_our_data: no, validity: ">= 45 days retention"}
+  - {ref: 30, item: "Monthly training by lender Collection Manager — latest completion doc", form: scan, category: people, in_our_data: partial, maps_to: CRT-03}
+
+# Scored agency audit (MVA). type: scorable counts to the 100-pt score; observation does not
+# (note MVA#41 is "observation" but carries weight 2 in the source). The sheet's own Status/Remarks
+# columns are the agency's self-attestation and are deliberately NOT copied here.
+agency_scorecard:
+  - {"ref": 1, "group": "Agency Readiness", "item": "Name Board Of The Collection Agency With Complete Address & GST Details", "type": "scorable", "weight": 2, "maps_to": null, "in_our_data": "no"}
+  - {"ref": 2, "group": "Agency Readiness", "item": "Endorsement Card Carrying While Doing Field Collection", "type": "scorable", "weight": 2, "maps_to": null, "in_our_data": "no"}
+  - {"ref": 3, "group": "Agency Readiness", "item": "FOS DRA (Debt Recovery Agent) Certified Or Trained Done For Current Onboarded Manpower (Applicable For Field)", "type": "observation", "weight": 0, "maps_to": "CRT-01", "in_our_data": "yes"}
+  - {"ref": 4, "group": "Agency KYC & Compliances", "item": "Service Agreement (Valid Agreement & Not The Expiry One)", "type": "scorable", "weight": 3, "maps_to": null, "in_our_data": "no"}
+  - {"ref": 5, "group": "Agency KYC & Compliances", "item": "Renewal Agreements", "type": "scorable", "weight": 3, "maps_to": null, "in_our_data": "no"}
+  - {"ref": 6, "group": "Agency KYC & Compliances", "item": "Agency's Registration Certificate", "type": "scorable", "weight": 3, "maps_to": null, "in_our_data": "no"}
+  - {"ref": 7, "group": "Agency KYC & Compliances", "item": "GST Fillings", "type": "scorable", "weight": 3, "maps_to": null, "in_our_data": "no"}
+  - {"ref": 8, "group": "Agency KYC & Compliances", "item": "No Dues Certificates From the Agency To Moneyview", "type": "observation", "weight": 0, "maps_to": null, "in_our_data": "no"}
+  - {"ref": 9, "group": "Agency KYC & Compliances", "item": "Income Tax Return Filed Or Not", "type": "scorable", "weight": 3, "maps_to": null, "in_our_data": "no"}
+  - {"ref": 10, "group": "Agency KYC & Compliances", "item": "Declaration Of Criminal Cases (Should Be Given Every Quarter By Proprietors)", "type": "scorable", "weight": 3, "maps_to": null, "in_our_data": "no"}
+  - {"ref": 11, "group": "Allocation", "item": "Monthly Target, Performance Versus Allocation Tracker To Be Maintained", "type": "scorable", "weight": 3, "maps_to": ["COV-01"], "in_our_data": "yes"}
+  - {"ref": 12, "group": "Allocation", "item": "Disposition Dump Is Being Maintained By Agency Along With Quality Remarks (Excel/CG App)", "type": "scorable", "weight": 3, "maps_to": "DSP-01", "in_our_data": "yes"}
+  - {"ref": 13, "group": "Allocation", "item": "Trails Update Against Total Account Allocated", "type": "scorable", "weight": 3, "maps_to": ["COV-01"], "in_our_data": "yes"}
+  - {"ref": 14, "group": "Allocation", "item": "CG App (Credgenics-Moneyview Inhouse Tool) Is Being Used While Performing Field Audits", "type": "scorable", "weight": 3, "maps_to": ["VIS-01", "VIS-02"], "in_our_data": "partial"}
+  - {"ref": 15, "group": "Information Security", "item": "Communication channel is Exclusively Used For Collection Related Activities By Agency (No Data Sharing With Customer Or WhatsApp Call To Customers)", "type": "scorable", "weight": 2, "maps_to": "CLI-01", "in_our_data": "yes"}
+  - {"ref": 16, "group": "Information Security", "item": "No Shared Agents Or Tele-Callers By Agency With Any Other Bank Or NBFC Portfolios (Segregation Of Tele-Callers Bucket Wise & Sitting Arrangements)", "type": "scorable", "weight": 3, "maps_to": "AGT-02", "in_our_data": "yes"}
+  - {"ref": 17, "group": "Information Security", "item": "Encryption Of Data (Password Protected)", "type": "scorable", "weight": 1, "maps_to": null, "in_our_data": "no"}
+  - {"ref": 18, "group": "Information Security", "item": "USB, CD, Floppy Or Any Data Sharing Portal Should Be Deactivated", "type": "scorable", "weight": 3, "maps_to": null, "in_our_data": "no"}
+  - {"ref": 19, "group": "Information Security", "item": "Data Purging Was Done By Agency", "type": "scorable", "weight": 3, "maps_to": null, "in_our_data": "no"}
+  - {"ref": 20, "group": "Information Security", "item": "Any Internal Tool Access Available In Agency", "type": "scorable", "weight": 3, "maps_to": null, "in_our_data": "no"}
+  - {"ref": 21, "group": "Information Security", "item": "Email Communication Through Registered Email Id", "type": "scorable", "weight": 3, "maps_to": null, "in_our_data": "no"}
+  - {"ref": 22, "group": "Information Security", "item": "logs of all terminated agents is available", "type": "scorable", "weight": 2, "maps_to": ["AGT-01", "ACC-01"], "in_our_data": "yes"}
+  - {"ref": 23, "group": "Information Security", "item": "Communication shared to LSP of all terminated Agents", "type": "scorable", "weight": 2, "maps_to": ["AGT-01", "ACC-01"], "in_our_data": "yes"}
+  - {"ref": 24, "group": "Information Security", "item": "All data/device access of terminated agents disabled/removed", "type": "scorable", "weight": 2, "maps_to": ["AGT-01", "ACC-01"], "in_our_data": "yes"}
+  - {"ref": 25, "group": "Agency Back Office and calling", "item": "Issue Of Identity Cards And Digital Id To Collectors", "type": "scorable", "weight": 3, "maps_to": "CRT-01", "in_our_data": "yes"}
+  - {"ref": 26, "group": "Agency Back Office and calling", "item": "Deletion Of Id & Submission Of Identity Card Of Inactive Collectors (COC Parameter)", "type": "scorable", "weight": 3, "maps_to": ["AGT-01", "ACC-01"], "in_our_data": "yes"}
+  - {"ref": 27, "group": "Agency Back Office and calling", "item": "Collector's Hiring Process (Positive RCU Check)", "type": "observation", "weight": 0, "maps_to": "CRT-02", "in_our_data": "yes"}
+  - {"ref": 28, "group": "Agency Back Office and calling", "item": "Code Of Conduct (COC Should Be Display In Premises)", "type": "scorable", "weight": 3, "maps_to": null, "in_our_data": "no"}
+  - {"ref": 29, "group": "Agency Back Office and calling", "item": "Previous Audit Non Compliance Is Addressed By Agency", "type": "scorable", "weight": 1, "maps_to": null, "in_our_data": "no"}
+  - {"ref": 30, "group": "Agency Back Office and calling", "item": "Call Recording Data Being Maintained Separately For Moneyview And Purged After 6 Months", "type": "scorable", "weight": 3, "maps_to": "REC-03", "in_our_data": "yes"}
+  - {"ref": 31, "group": "Agency Back Office and calling", "item": "CCOC : Training, Briefing to Tele-Caller & FOS, Adherence and compliance", "type": "scorable", "weight": 2, "maps_to": "CRT-03", "in_our_data": "yes"}
+  - {"ref": 32, "group": "Agency Back Office and calling", "item": "Agency Manager/Proprietors Or Any Employee Found An Relationship With Moneyview (Employed Within Last 1 Year)", "type": "scorable", "weight": 3, "maps_to": null, "in_our_data": "no"}
+  - {"ref": 33, "group": "Agency Back Office and calling", "item": "No calls are made through personal unregistered mobile numbers", "type": "scorable", "weight": 2, "maps_to": "CLI-01", "in_our_data": "yes"}
+  - {"ref": 34, "group": "Agency Back Office and calling", "item": "All Call logs maintained for last 180 days", "type": "scorable", "weight": 2, "maps_to": "REC-03", "in_our_data": "yes"}
+  - {"ref": 35, "group": "Agency Back Office and calling", "item": "All Call recordings maintained for last 180 days", "type": "scorable", "weight": 2, "maps_to": "REC-03", "in_our_data": "yes"}
+  - {"ref": 36, "group": "Agency Back Office and calling", "item": "All calls made between 8:00 AM- 7:00PM", "type": "scorable", "weight": 2, "maps_to": "HRS-01", "in_our_data": "yes"}
+  - {"ref": 37, "group": "Agency Back Office and calling", "item": "No persistant calling attempt on Cx", "type": "scorable", "weight": 2, "maps_to": "FRQ-01", "in_our_data": "yes"}
+  - {"ref": 38, "group": "Agency Back Office and calling", "item": "Regular Training conducted to improve/sustain calling quality", "type": "scorable", "weight": 1, "maps_to": "CRT-03", "in_our_data": "yes"}
+  - {"ref": 39, "group": "Agency Back Office and calling", "item": "CCOC adherence for Non first party provided contact", "type": "scorable", "weight": 1, "maps_to": "CNT-01", "in_our_data": "yes"}
+  - {"ref": 40, "group": "Agency Back Office and calling", "item": "Call quality review a. Does the agent clearly state the company + lender name? b. Do agents verify the correct customer before discussing dues? c. Any instances of abusive, aggressive, or threatening language in calls? d. Are agents passing correct information/details to Cx? Also, there should be no false promises or false information provided to Cx", "type": "scorable", "weight": 3, "maps_to": ["IDN-01", "VER-01", "CND-01", "CND-02"], "in_our_data": "yes"}
+  - {"ref": 41, "group": "Agency Back Office and calling", "item": "** 1600 series numbers to used agency only on MV portfolio", "type": "observation", "weight": 2, "maps_to": "CLI-01", "in_our_data": "yes"}
+  - {"ref": 42, "group": "Customer Escalation Support", "item": "Availability of CX support team for Cx queries", "type": "scorable", "weight": 2, "maps_to": null, "in_our_data": "no"}
+  - {"ref": 43, "group": "Customer Escalation Support", "item": "Availability of SOP and TAT to handle Cx escalation raised by LSP", "type": "scorable", "weight": 2, "maps_to": null, "in_our_data": "no"}
+  - {"ref": 44, "group": "Customer Escalation Support", "item": "Any Root cause investigation/documented with logs for previous escalations", "type": "scorable", "weight": 2, "maps_to": null, "in_our_data": "no"}
+  - {"ref": 45, "group": "Agency_communication", "item": "Communication logs shared for last 180 days", "type": "scorable", "weight": 1, "maps_to": null, "in_our_data": "no"}
+  - {"ref": 46, "group": "Agency_communication", "item": "All communication templates approved by LSP", "type": "scorable", "weight": 1, "maps_to": "TPL-01", "in_our_data": "yes"}
+  - {"ref": 47, "group": "Agency_communication", "item": "No communication initiated without pre-approved templates", "type": "scorable", "weight": 1, "maps_to": "TPL-01", "in_our_data": "yes"}
+
+# Full QA scorecard (QM sheet "Legends"). weight "F/NF" = Fatal/Non-Fatal (any fail = call fails).
+# qm_coverage = status of the team's existing speech-analytics coverage per the sheet (col F/G).
+qm_parameters:
+  - {ref: B2,  group: Call Opening, name: Greeting, weight: 2, qm_coverage: partial, audit_check: null}
+  - {ref: B3,  group: Call Opening, name: Introduced Self, weight: 4, qm_coverage: done, audit_check: IDN-01}
+  - {ref: B4,  group: Call Opening, name: Introduction of Company, weight: F/NF, qm_coverage: done, audit_check: IDN-01}
+  - {ref: B5,  group: Call Opening, name: Quality (Recording) Disclaimer, weight: F/NF, qm_coverage: done, audit_check: REC-02}
+  - {ref: B6,  group: Call Opening, name: Right / Third Party Contact, weight: 2, qm_coverage: done, audit_check: VER-01}
+  - {ref: B7,  group: Call Opening, name: Purpose of Call, weight: 3, qm_coverage: done, audit_check: VER-01}
+  - {ref: B8,  group: Collection & Negotiation, name: Immediate dues, weight: 8, qm_coverage: done, audit_check: null}
+  - {ref: B9,  group: Collection & Negotiation, name: CIBIL Info, weight: 8, qm_coverage: done, audit_check: null}
+  - {ref: B10, group: Collection & Negotiation, name: Objection Handling / Call Control, weight: 10, qm_coverage: done, audit_check: null}
+  - {ref: B11, group: Collection & Negotiation, name: Effective Probing, weight: 10, qm_coverage: done, audit_check: null}
+  - {ref: B12, group: Collection & Negotiation, name: Creating Urgency, weight: 10, qm_coverage: partial, audit_check: null}
+  - {ref: B13, group: Collection & Negotiation, name: Education of Outstanding / Total Dues, weight: 4, qm_coverage: done, audit_check: null}
+  - {ref: B14, group: Capturing Mandate Information, name: Complete and Correct Information, weight: 4, qm_coverage: partial, audit_check: CND-02}
+  - {ref: B15, group: Capturing Mandate Information, name: Wrong Information / False Commitment, weight: F/NF, qm_coverage: partial, audit_check: CND-02}
+  - {ref: B16, group: Capturing Mandate Information, name: Mandate PTP Details, weight: F/NF, qm_coverage: done, audit_check: null}
+  - {ref: B17, group: Closing, name: Summarization, weight: 5, qm_coverage: done, audit_check: null}
+  - {ref: B18, group: Closing, name: Thanking the Customer, weight: 2, qm_coverage: partial, audit_check: null}
+  - {ref: B19, group: Closing, name: Capturing Alternate Number & Email, weight: 2, qm_coverage: done, audit_check: null}
+  - {ref: B20, group: Documentation & Tagging, name: Field and Remark Updation (Minor), weight: 3, qm_coverage: not_from_recording, audit_check: null}
+  - {ref: B21, group: Documentation & Tagging, name: Field and Remark Updation (Major), weight: F/NF, qm_coverage: not_from_recording, audit_check: DSP-01}
+  - {ref: B22, group: Documentation & Tagging, name: Disposition, weight: F/NF, qm_coverage: not_from_recording, audit_check: DSP-01}
+  - {ref: B23, group: Soft Skills, name: Active Listening / Interruption, weight: 5, qm_coverage: partial, audit_check: null}
+  - {ref: B24, group: Soft Skills, name: Empathy / Sympathy, weight: 2, qm_coverage: done, audit_check: CND-04}
+  - {ref: B25, group: Soft Skills, name: Professionalism / Tone / Confidence, weight: 8, qm_coverage: partial, audit_check: null}
+  - {ref: B26, group: Soft Skills, name: Language and Grammar, weight: 5, qm_coverage: partial, audit_check: null}
+  - {ref: B27, group: Soft Skills, name: Hold Procedure / Dead air, weight: 3, qm_coverage: partial, audit_check: null}
+  - {ref: B28, group: Soft Skills, name: Avoid being Rude and Unprofessional, weight: F/NF, qm_coverage: partial, audit_check: CND-01}

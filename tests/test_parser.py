@@ -50,7 +50,9 @@ def test_instruction_request_becomes_a_full_audit_with_period_and_size():
             "guardrails mentioned in the rules & data, are they being followed or not, and have put a sample size of 300")
     checks, scale = _parse_fallback(Request(request_id="T", source="text", text=text))
     assert [c.check_type for c in checks] == [t for t in CheckType if t is not CheckType.OTHER]  # every guardrail
-    assert scale == DEFAULT_SCALE and checks[0].test["severity"] == "Critical" and checks[-1].test["severity"] == "Minor"
+    sev = {c.check_type: c.test["severity"] for c in checks}
+    assert scale == DEFAULT_SCALE and sev[CheckType.CONSENT_BEFORE_CONTACT] == "Critical" and sev[CheckType.RECORDING_COMPLETENESS] == "Minor"
+    assert sev[CheckType.THIRD_PARTY_DISCLOSURE] == "Critical" and sev[CheckType.TEMPLATE_APPROVAL] == "Major"
     s = parse_sample(text, today=date(2026, 11, 19))
     assert s["size"] == 300 and s["accounts"] == []
     assert (s["period"]["start"], s["period"]["end"]) == ("2026-10-01", "2026-11-01")  # end excluded

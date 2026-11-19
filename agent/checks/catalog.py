@@ -59,6 +59,38 @@ CHECK_INFO: dict[str, dict] = {
         "sources": ["CN Core call log", "Recording store"],
         "limits": None,
     },
+    "template_approval": {
+        "title": "Messages sent on approved templates",
+        "tests": "Every WhatsApp or SMS message was sent on a template that was approved, and not yet retired, at the moment it was sent (catalog TPL-01).",
+        "gap": "No template on record, a template that is pending, rejected or expired, one approved only after the message was sent, or one already retired.",
+        "unknown": "None expected.",
+        "sources": ["CN Core message log", "Template registry"],
+        "limits": None,
+    },
+    "collector_active": {
+        "title": "Collector active on the call date",
+        "tests": "The collector who made each outbound call was an active collector on the date of the call, from their effective-dated status history (catalog AGT-01).",
+        "gap": "The collector was terminated or inactive on that date, or had no active status on record for it.",
+        "unknown": "The collector has no employee code, or no status history exists for it.",
+        "sources": ["CN Core call log", "Collector status history"],
+        "limits": None,
+    },
+    "caller_id_registered": {
+        "title": "Calls from registered numbers",
+        "tests": "Every outbound call was placed from a number registered to the agency on the call date, never from a personal mobile (catalog CLI-01).",
+        "gap": "The number was never registered to the agency, or was registered only from a later date.",
+        "unknown": "The call log carries no caller number, or the collector's agency is unknown.",
+        "sources": ["CN Core call log", "Registered caller IDs"],
+        "limits": None,
+    },
+    "third_party_disclosure": {
+        "title": "No dues disclosed to reference contacts",
+        "tests": "On connected outbound calls to a reference contact (a person the borrower named, not the borrower), no dues were disclosed (catalog CNT-01).",
+        "gap": "The transcript shows dues disclosed on a call to a reference contact.",
+        "unknown": "The call was to a reference contact and the recording or transcript is missing or unreadable.",
+        "sources": ["CN Core call log", "Recording store", "Transcript store"],
+        "limits": None,
+    },
     "other": {
         "title": "Not testable by the platform",
         "tests": "This question could not be mapped to a test. It is reported in the response as unanswered, never dropped.",
@@ -92,6 +124,9 @@ ASSUMPTIONS = [
     ("Notice timeline", "Business days are Monday to Friday excluding national holidays, from the trigger date. Dispatch and service are each tested "
                         "against the rule in force on the trigger date. The deadline day itself is inside the limit."),
     ("Certificates", "Valid from and valid to dates are both inclusive. The call date is the IST date. The register is keyed by employee code."),
+    ("Templates", "A template counts as approved from its approval date (UTC) until it is retired. A message sent before approval, after retirement, or on a template that is pending, rejected or expired, is a gap."),
+    ("Collector status and caller IDs", "Status history and caller ID registrations are effective-dated; both ends are inclusive and the call date is the IST date. A caller number is checked against the collector's agency."),
+    ("Reference contacts", "A reference contact is a number the borrower named for someone else (contact type REFERENCE). Dues disclosed to one is a gap; with no readable transcript the result is cannot determine."),
     ("Account references", "References in a request are matched to CN loan accounts by loan account number or CN account id. A reference that matches "
                            "nothing, or more than one loan, stays visible and is not tested until Compliance resolves it."),
     ("Gaps are never softened", "Disputing a gap in review adds a note; it does not remove the gap from the report or the letter."),
@@ -102,6 +137,9 @@ ASSUMPTIONS = [
 SOURCES = [
     ("CN Core call sessions (SlashRTC, CognifAI)", "staging.call_sessions", "started_ts_utc", "SlashRTC IST, CognifAI UTC"),
     ("CN Core message log (WhatsApp, SMS)", "staging.messages", "sent_ts_utc", "Asia/Kolkata"),
+    ("Template registry (approval dates)", "staging.templates", "approved_at", "UTC"),
+    ("Collector status history", "staging.collector_status", "valid_from", "calendar dates (India)"),
+    ("Registered caller IDs", "staging.registered_clis", "valid_from", "calendar dates (India)"),
     ("Consent registry", "staging.consents", "effective_ts_utc", "UTC"),
     ("Recording store (status)", "staging.recordings", None, "n/a"),
     ("Transcript segments", "staging.transcript_segments", None, "offsets into the recording"),

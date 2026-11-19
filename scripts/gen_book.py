@@ -27,6 +27,10 @@ from pathlib import Path
 
 import psycopg
 from dotenv import load_dotenv
+from retired import (  # what db/migrations/V017 removed; rows for it are not generated into the database
+    RETIRED_COLUMNS,
+    RETIRED_TABLES,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -124,6 +128,10 @@ class Sink:
         self.files[table], self.writers[table] = f, csv.writer(f)
 
     def add(self, table: str, **row) -> None:
+        if table in RETIRED_TABLES:
+            return
+        for c in RETIRED_COLUMNS.get(table, ()):
+            row.pop(c, None)
         if table not in self.writers:
             self._open(table)
         extra = set(row) - set(self.cols[table])
@@ -203,6 +211,34 @@ def main(scale: float, seed: int) -> None:
             agents_by_org[oid].append(add_user(oid, 2, "Tele Agent", code=rnd.random() > 0.02))
         all_agents = [a for v in agents_by_org.values() for a in v]
 
+        # collector status history (effective-dated) and the caller IDs registered to each agency
+        status_spans, status_id, cli_id, reg_from = {}, 0, 0, {}
+        late_reg = {u["user_id"] for u in rnd.sample(all_agents, 3)}  # numbers registered part-way through the period
+        for u in all_agents:
+            code = u["employee_code"]
+            if code:
+                onboard, r = date(2024, 6, 1) + timedelta(days=rnd.randint(0, 400)), rnd.random()
+                if r < 0.06:  # leaves during the period: terminated from that day
+                    left = date(2026, 2, 1) + timedelta(days=rnd.randint(0, 240))
+                    rows = [("ACTIVE", onboard, left - timedelta(days=1)), ("TERMINATED", left, None)]
+                elif r < 0.10:  # a spell of inactivity
+                    a0 = date(2026, 1, 1) + timedelta(days=rnd.randint(0, 220))
+                    b0 = a0 + timedelta(days=rnd.randint(20, 50))
+                    rows = [("ACTIVE", onboard, a0 - timedelta(days=1)), ("INACTIVE", a0, b0), ("ACTIVE", b0 + timedelta(days=1), None)]
+                else:
+                    rows = [("ACTIVE", onboard, None)]
+                status_spans[code] = [(f, t) for st, f, t in rows if st == "ACTIVE"]
+                for st, f, t in rows:
+                    status_id += 1
+                    add("compliance.collector_status", status_id=status_id, employee_code=code, status=st, valid_from=f, valid_to=t)
+            cli_id += 1
+            reg_from[u["user_id"]] = START + timedelta(days=rnd.randint(60, 200)) if u["user_id"] in late_reg else EPOCH
+            add("compliance.registered_cli", cli_id=cli_id, cli_number=u["contact_no"], organization_id=u["organization_id"], purpose="COLLECTIONS", valid_from=reg_from[u["user_id"]], valid_to=None)
+
+        def active_on(ag, d):
+            spans = status_spans.get(ag["employee_code"])
+            return True if spans is None else any(f <= d and (t is None or d <= t) for f, t in spans)
+
         # ================================================================ lenders, branches
         for code, name, typ, _ in LENDERS:
             add("cn_core.institution", institution_code=code, institution_name=name, lender_type=typ)
@@ -216,8 +252,8 @@ def main(scale: float, seed: int) -> None:
                     postal_code=str(rnd.randint(400000, 700000)), country_code="IN", city=city, institution_code=code)
 
         # ================================================================ dialers, campaigns, process types and instances (12 months)
-        add("compliance.dialer_config", dialer_code="SLASHRTC", dialer_name="SlashRTC", timezone="Asia/Kolkata", session_id_format="SRTC-YYYYMMDD-NNNNNN")
-        add("compliance.dialer_config", dialer_code="COGNIFAI", dialer_name="CognifAI", timezone="UTC", session_id_format="cgn-<uuid>")
+        add("compliance.dialer_config", dialer_code="SLASHRTC", dialer_name="SlashRTC", timezone="Asia/Kolkata", clock_source="dialer")
+        add("compliance.dialer_config", dialer_code="COGNIFAI", dialer_name="CognifAI", timezone="UTC", clock_source="dialer")
         dialer_tz = {"SLASHRTC": IST, "COGNIFAI": UTC}
         agency_dialers = {11: {"MANUAL": "SLASHRTC", "CAMPAIGN": "SLASHRTC"}, 12: {"MANUAL": "SLASHRTC", "CAMPAIGN": "SLASHRTC"},
                           13: {"MANUAL": "COGNIFAI", "CAMPAIGN": "COGNIFAI"}, 14: {"MANUAL": "SLASHRTC", "CAMPAIGN": "COGNIFAI"}}
@@ -270,16 +306,26 @@ def main(scale: float, seed: int) -> None:
             add("compliance.holiday_calendar", holiday_id=hid, holiday_date=d, holiday_name=n, scope="state", state=st)
 
         # ================================================================ D11 template registry (400)
-        templates = defaultdict(list)  # (channel, category) -> approved template ids
+        templates = defaultdict(list)  # (channel, category, language) -> approved template ids
+        tmpl_info, bad_templates = {}, defaultdict(list)  # template id -> (status, approved_at, retired_at); (channel, category) -> templates not approved at send time
+        late_approved = set(rnd.sample(range(1, 401), 8))  # approved part-way through the period: a message sent on one before then breaches TPL-01
         for t in range(1, 401):
             channel = rnd.choices(["WHATSAPP", "SMS", "EMAIL"], [0.4, 0.4, 0.2])[0]
             cat = rnd.choices(["COLLECTIONS", "SERVICE", "PROMOTIONAL"], [0.55, 0.25, 0.20])[0]
             lang = rnd.choices(["en", "hi", "kn", "ta", "te", "mr"], [0.3, 0.25, 0.15, 0.1, 0.1, 0.1])[0]
             status = rnd.choices(["APPROVED", "PENDING", "REJECTED", "EXPIRED"], [0.88, 0.04, 0.04, 0.04])[0]
+            approved_at = retired_at = None
+            if status == "APPROVED":
+                approved_at = datetime.combine(START + timedelta(days=rnd.randint(90, 260)) if t in late_approved else date(2025, 1, 1) + timedelta(days=rnd.randint(0, 270)), time(0, 0))
+            elif status == "EXPIRED":
+                approved_at, retired_at = datetime(2025, 1, 1) + timedelta(days=rnd.randint(0, 200)), datetime.combine(START + timedelta(days=rnd.randint(60, 300)), time(0, 0))
             add("cn_core.digital_template", template_id=t, sms_category=cat, sms_dlt_id=f"DLT{1000 + t}", digital_channel=channel, template_subject=f"{cat.title()} {lang} v{t % 5 + 1}",
-                template_body=CATEGORY_TEXT[cat][lang], language=lang, approval_status=status)
+                template_body=CATEGORY_TEXT[cat][lang], language=lang, approval_status=status, approved_at=approved_at, retired_at=retired_at)
+            tmpl_info[t] = (status, approved_at, retired_at)
             if status == "APPROVED":
                 templates[(channel, cat, lang)].append(t)
+            else:
+                bad_templates[(channel, cat)].append(t)
 
         def template_for(channel, cat, lang):
             for key in ((channel, cat, lang), (channel, cat, "en")):
@@ -442,12 +488,17 @@ def main(scale: float, seed: int) -> None:
             if rnd.random() < 0.1:
                 oid = rnd.choice(TELE)
                 ag = rnd.choice(agents_by_org[oid])
+            d0 = start.date()
+            if not active_on(ag, d0) and rnd.random() < 0.85:  # mostly the work goes to someone active; the rest is a breach
+                pool = [x for x in agents_by_org[oid] if active_on(x, d0)]
+                ag = rnd.choice(pool) if pool else ag
             mode = rnd.choices(["MANUAL", "CAMPAIGN"], [0.45, 0.55])[0]
+            cli = mobile() if mode == "MANUAL" and rnd.random() < 0.015 else ag["contact_no"]  # a personal mobile is not on the registered list
             dialer = agency_dialers[oid][mode]
             status = forced or rnd.choices(["CONNECTED", "NO_ANSWER", "BUSY", "SYSTEM_FAILURE"], [0.5, 0.33, 0.12, 0.05])[0]
             rr = rnd.random()
             return dict(account=a, contact=contact, start=start, status=status, connected=status == "CONNECTED", duration=rnd.randint(40, 900) if status == "CONNECTED" else 0,
-                        direction=direction, org=oid, agent=ag, mode=mode, dialer=dialer, sid=new_sid(dialer, start), mirror=None,
+                        direction=direction, org=oid, agent=ag, mode=mode, dialer=dialer, sid=new_sid(dialer, start), mirror=None, cli=cli,
                         _stor="AVAILABLE" if rr < 0.94 else "NOT_FOUND" if rr < 0.97 else "RETRIEVAL_FAILED")
 
         sessions, by_acct = [], defaultdict(list)
@@ -561,7 +612,7 @@ def main(scale: float, seed: int) -> None:
             for st, a0, a1 in rows:
                 tpicl += 1
                 first_log = first_log or tpicl
-                add("cn_core.tele_process_instance_call_logs", id=tpicl, tele_process_instance_id=inst, call_contact_number=s["contact"], user_contact_number=ag["contact_no"],
+                add("cn_core.tele_process_instance_call_logs", id=tpicl, tele_process_instance_id=inst, call_contact_number=s["contact"], user_contact_number=s["cli"],
                     call_direction=s["direction"], call_status=st, call_session_id=sid, call_start_date_time=dts(a0, dialer), call_end_date_time=dts(a1, dialer),
                     call_duration=s["duration"] if st in ("CONNECTED", "DISPOSED") else 0, call_recording_link=f"https://rec.example.test/{dialer.lower()}/{sid}.mp3" if s["connected"] else None,
                     call_user_id=ag["user_id"], dialer_code=dialer)
@@ -644,7 +695,10 @@ def main(scale: float, seed: int) -> None:
                 cat = rnd.choices(["COLLECTIONS", "SERVICE", "PROMOTIONAL"], [0.85, 0.08, 0.07])[0]
                 mid += 1
                 recip = nums[0] if rnd.random() < 0.85 else nums[-1]
-                msgs.append(dict(id=mid, a=a, ts=ts, ch=ch, cat=cat, tmpl=template_for(ch, cat, lang), recip=recip,
+                tm = template_for(ch, cat, lang)
+                if bad_templates.get((ch, cat)) and rnd.random() < 0.03:  # a message sent on a template that was pending, rejected or retired
+                    tm = rnd.choice(bad_templates[(ch, cat)])
+                msgs.append(dict(id=mid, a=a, ts=ts, ch=ch, cat=cat, tmpl=tm, recip=recip,
                                  status=rnd.choices(["DELIVERED", "SENT", "READ", "FAILED"], [0.6, 0.2, 0.1, 0.1])[0]))
         msgs.sort(key=lambda m: m["ts"])
         first_msg = {}
@@ -842,9 +896,16 @@ def main(scale: float, seed: int) -> None:
                 cnd.add((aid, "Q6"))
             elif not any(vf <= d <= vt for vf, vt in emp_valid.get(code, [])):
                 gaps.add((aid, "Q6"))
+            if code is None:  # AGT-01: the collector's status on the call date
+                cnd.add((aid, "Q9"))
+            elif not active_on(s["agent"], d):
+                gaps.add((aid, "Q9"))
+            if not (s["cli"] == s["agent"]["contact_no"] and reg_from[s["agent"]["user_id"]] <= d):  # CLI-01: the number was registered to the agency that day
+                gaps.add((aid, "Q10"))
         for (aid, _, d), ss in per_contact_day.items():
             if len(ss) > pick(DAILY_CAP[acct_by_id[aid]["institution_code"]], d):
                 gaps.add((aid, "Q3"))
+        ctype_of_no = {r["contact_no"]: r["contact_type"] for rows in ccn.values() for r in rows}
         for s in sessions:
             if s["direction"] != "OUTBOUND" or not s["connected"]:
                 continue
@@ -860,6 +921,11 @@ def main(scale: float, seed: int) -> None:
                 cnd.add((aid, "Q4"))
             elif scen in ("disclosure_first", "no_verification", "failed_then_disclosed"):
                 gaps.add((aid, "Q4"))
+            if ctype_of_no.get(s["contact"]) == "REFERENCE":  # CNT-01: dues must not be disclosed to a contact the borrower did not provide
+                if stor == "AVAILABLE" and scen in ("ok", "disclosure_first", "no_verification", "failed_then_disclosed", "unclear"):
+                    gaps.add((aid, "Q11"))
+                elif not (stor == "AVAILABLE" and scen == "no_disclosure"):
+                    cnd.add((aid, "Q11"))
         ev_by_key = defaultdict(list)
         for e in consent_events:
             ev_by_key[(e["contact_no"], e["channel"])].append(e)
@@ -871,6 +937,10 @@ def main(scale: float, seed: int) -> None:
                 (granted.add if c["status"] == "GRANTED" else granted.discard)(c["purpose"])
             if not (m["cat"] in granted or (m["cat"] == "SERVICE" and "COLLECTIONS" in granted)):
                 gaps.add((m["a"]["id"], "Q1"))
+            tstat, tapp, tret = tmpl_info[m["tmpl"]]  # TPL-01: the template was approved, and not retired, when the message was sent
+            sent = m["ts"].astimezone(UTC).replace(tzinfo=None)
+            if not (tstat == "APPROVED" and tapp is not None and tapp <= sent and (tret is None or sent < tret)):
+                gaps.add((m["a"]["id"], "Q8"))
         for n in notices:
             t0 = n["trigger_date"]
             if (n["dispatch_date"] is None or bdays(t0, n["dispatch_date"], nat) > NOTICE_DISPATCH_BDAYS or n["served_date"] is None
@@ -888,7 +958,7 @@ def main(scale: float, seed: int) -> None:
             refs.insert(rnd.randrange(len(refs)), typo)
         matched = {a["id"] for a in sample_accts if a["account_number"] not in amb_nums}
         qn = {"Q1": "consent_before_contact", "Q2": "calling_hours", "Q3": "calling_frequency", "Q4": "verification_before_disclosure", "Q5": "notice_timeline", "Q6": "agent_certification",
-              "Q7": "recording_completeness"}
+              "Q7": "recording_completeness", "Q8": "template_approval", "Q9": "collector_active", "Q10": "caller_id_registered", "Q11": "third_party_disclosure"}
         gk = ROOT / "eval" / "gap_keys"
         gk.mkdir(parents=True, exist_ok=True)
         key = sorted((a, q) for a, q in gaps if a in matched)
@@ -912,6 +982,7 @@ def main(scale: float, seed: int) -> None:
                  "cn_core.ptp_ledger", "cn_core.payment_feed", "cn_core.aa_bank_statement", "cn_core.bureau_snapshot", "cn_core.bureau_tradeline", "cn_core.channel_cost_capacity",
                  "compliance.dialer_config", "compliance.call_session_xref", "compliance.calling_policy_rule", "compliance.holiday_calendar", "compliance.customer_consent",
                  "compliance.consent_dnd_registry", "compliance.collector_certification", "compliance.call_recording", "compliance.call_transcript_segment", "compliance.notice"]
+        order = [t for t in order if t not in RETIRED_TABLES] + ["compliance.collector_status", "compliance.registered_cli"]
         print("Replacing the data (previous audit runs referred to the old data and are cleared)...")
         conn.execute("TRUNCATE " + ", ".join(order) + ", audit.runs RESTART IDENTITY CASCADE")
         S.load(order)
@@ -942,10 +1013,14 @@ Q4. Where dues were disclosed on a call, show the borrower's identity was verifi
 Q5. Show that notices were dispatched and served within the permitted timeline.
 Q6. Confirm the recovery agent was certified on the date of each call they made.
 Q7. Provide the recording for every connected call.
+Q8. Show that every WhatsApp or SMS message was sent on a template that was approved at the time it was sent.
+Q9. Confirm that the collector who made each call was an active collector on the date of the call.
+Q10. Confirm that every call was placed from a number registered to the agency, and not from a personal mobile.
+Q11. Confirm that no dues were disclosed on calls to reference contacts the borrower did not provide.
 
 Severity scale for gaps:
-  Critical - regulatory breach affecting the borrower directly (Q1, Q2, Q3, Q4)
-  Major    - process breach with documentary impact (Q5, Q6)
+  Critical - regulatory breach affecting the borrower directly (Q1, Q2, Q3, Q4, Q11)
+  Major    - process breach with documentary impact (Q5, Q6, Q8, Q9, Q10)
   Minor    - evidence completeness (Q7)
 
 Sampled accounts:

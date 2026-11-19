@@ -166,7 +166,7 @@ within the previous month. Sample size 300.</pre> Every guardrail is tested unle
       <tr><td><code>compliance</code></td><td>Consent, certification, D12 rules, holidays, recordings, transcripts, notices, dialer config</td></tr>
       <tr><td><code>audit</code></td><td>Audit runs, findings, citations, reviews, letters, guardrails, knowledge base</td></tr>
       <tr><td><code>staging</code></td><td>Views the agent reads (UTC timestamps). Read-only</td></tr>
-      <tr><td><code>book</code></td><td>The sandbox view of the data: <code>d1_account_master</code> to <code>d13_channel_cost</code> with the sandbox's own field names (read-only views)</td></tr>
+      <tr><td><code>book</code></td><td>The sandbox view of the data: <code>d1_account_master</code>, <code>d2_borrower_master</code>, <code>d4_contact_history</code>, <code>d5_call_transcripts</code>, <code>d10_consent_dnd</code>, <code>d11_template_registry</code> and <code>d12_policy_library</code> with the sandbox's own field names (read-only views; the datasets no audit check reads were removed)</td></tr>
       <tr><td><code>sandbox</code></td><td>Your own scratch tables</td></tr></tbody></table>
     <p>In the Supabase <strong>Table Editor</strong>, the schema is chosen from the dropdown at the top left. It opens on <code>public</code>, which is empty.</p>
     <h2>What to add so a check can see it</h2>
@@ -176,13 +176,16 @@ within the previous month. Sample size 300.</pre> Every guardrail is tested unle
       <tr><td>A message and its consent</td><td><code>cn_core.communication_dashboard_t</code> (recipient in <code>sms_contact_no</code>, <code>template_id</code>) and <code>compliance.customer_consent</code> for the same number and channel (UTC)</td></tr>
       <tr><td>A notice</td><td><code>compliance.notice</code> (trigger, dispatch and served dates)</td></tr>
       <tr><td>A collector's certificate</td><td><code>compliance.collector_certification</code>, keyed by the user's <code>employee_code</code></td></tr>
+      <tr><td>A collector's status (active, inactive, terminated)</td><td><code>compliance.collector_status</code>, with <code>valid_from</code> and <code>valid_to</code></td></tr>
+      <tr><td>A number an agency may call from</td><td><code>compliance.registered_cli</code>; the call's own number is <code>user_contact_number</code> on the call log</td></tr>
+      <tr><td>When a template was approved or retired</td><td><code>approved_at</code> and <code>retired_at</code> on <code>cn_core.digital_template</code></td></tr>
       <tr><td>A change in a limit</td><td>A new row in <code>compliance.calling_policy_rule</code> with an <code>effective_from</code> date and, for hours and daily caps, the lender's <code>institution_code</code> (BANK01, NBFC01 or MFI01); set an <code>effective_to</code> on the row it replaces</td></tr></tbody></table>
     <h2>Time zones</h2>
     <p>SlashRTC call times are IST, CognifAI call times are UTC, the message log is IST, consent is UTC. Enter each in its own source's zone. The platform converts to UTC for comparison and shows both.</p>
     <h2>After you change data</h2>
     <p>The views are live, so a new audit sees your rows straight away. Existing audits do not change: run a new one.</p>
     <div class="do"><strong>Do:</strong> use synthetic data; keep rows consistent across tables; put experiments in <code>sandbox</code>.</div>
-    <div class="dont"><strong>Do not:</strong> run <code>scripts/gen_book.py</code>, <code>scripts/load_data.py</code> or <code>migrate.py --reset</code> against the shared database (they replace everyone's data and refuse to run without a deliberate override); edit an existing migration file; load real borrower data.</div>` },
+    <div class="dont"><strong>Do not:</strong> run <code>scripts/gen_book.py</code> or <code>migrate.py --reset</code> against the shared database (they replace everyone's data and refuse to run without a deliberate override); edit an existing migration file; load real borrower data.</div>` },
 
   { id: "team", title: "Team setup", html: `
     <h1>Team setup</h1>
