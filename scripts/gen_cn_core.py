@@ -74,6 +74,14 @@ def add_bdays(start: date, n: int, hol: set[date]) -> date:
     return d
 
 
+def _refuse_shared_reload(url: str) -> None:
+    """This script replaces the data in the tables it loads. On a shared (non-local) database that would wipe teammates' rows,
+    so it only runs there when ALLOW_RELOAD=1 is set on purpose."""
+    host = url.split("@")[-1].split("/")[0].split(":")[0]
+    if host not in ("localhost", "127.0.0.1", "db", "") and os.environ.get("ALLOW_RELOAD") != "1":
+        raise SystemExit(f"Refusing to reload the shared database at {host}: this replaces everyone's data. Set ALLOW_RELOAD=1 only if the team agreed.")
+
+
 def main(seed: int) -> None:
     load_dotenv(ROOT / ".env")
     rnd = random.Random(seed)
@@ -682,6 +690,7 @@ def main(seed: int) -> None:
         t["cn_core.account"].append({k: v for k, v in a.items() if not k.startswith("_")})
     for c in custs:
         t["cn_core.customer"].append({k: v for k, v in c.items() if k != "state"})
+    _refuse_shared_reload(os.environ.get("DATABASE_URL", ""))
     with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
         conn.execute("TRUNCATE " + ", ".join(order) + " RESTART IDENTITY CASCADE")
         for name in order:

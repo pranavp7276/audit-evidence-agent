@@ -103,6 +103,15 @@ def load_one(conn, entry: dict) -> None:
           + (f"  (renamed: {', '.join(renamed[:5])}{' ...' if len(renamed) > 5 else ''})" if renamed else ""))
 
 
+def _refuse_shared_reload(url: str) -> None:
+    """This script replaces the data in the tables it loads. On a shared (non-local) database that would wipe teammates' rows,
+    so it only runs there when ALLOW_RELOAD=1 is set on purpose."""
+    host = url.split("@")[-1].split("/")[0].split(":")[0]
+    if host not in ("localhost", "127.0.0.1", "db", "") and os.environ.get("ALLOW_RELOAD") != "1":
+        raise SystemExit(f"Refusing to reload the shared database at {host}: this replaces everyone data. "
+                         "Set ALLOW_RELOAD=1 only if the team agreed.")
+
+
 def main(only: Iterable[str]) -> None:
     load_dotenv(ROOT / ".env")
     url = os.environ.get("DATABASE_URL") or sys.exit("DATABASE_URL is not set. Copy .env.example to .env.")
@@ -114,6 +123,7 @@ def main(only: Iterable[str]) -> None:
         if unknown:
             sys.exit(f"Not in manifest: {sorted(unknown)}")
         entries = [e for e in entries if e["table"] in only]
+    _refuse_shared_reload(url)
     with psycopg.connect(url, autocommit=True) as conn:
         for entry in entries:
             load_one(conn, entry)
