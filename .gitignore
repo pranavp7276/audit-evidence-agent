@@ -1,0 +1,24 @@
+# Secrets
+.env
+
+# Data never goes into git (it lives on the shared drive)
+data/raw/*
+!data/raw/.gitkeep
+eval/requests/*
+!eval/requests/.gitkeep
+eval/gap_keys/*
+!eval/gap_keys/.gitkeep
+out/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/

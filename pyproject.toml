@@ -1,0 +1,26 @@
+[project]
+name = "audit-evidence-agent"
+version = "0.1.0"
+description = "Agent that answers lender/regulator audit requests on outsourced collections with a cited evidence pack and gap report."
+requires-python = ">=3.11"
+dependencies = [
+  "psycopg[binary]>=3.1",
+  "pydantic>=2.6",
+  "pyyaml>=6.0",
+  "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.5"]
+
+[tool.setuptools.packages.find]
+include = ["agent*", "eval*", "scripts*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 130
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
