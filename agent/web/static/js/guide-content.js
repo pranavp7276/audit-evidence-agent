@@ -117,6 +117,21 @@ within the previous month. Sample size 300.</pre> Every guardrail is tested unle
     <p>The same tab has a <em>Quality check</em>: score the audit against a known gap key (recall, false gaps, claims without a citation).</p>
     <div class="note">Audits are frozen once completed. To test changed data or a changed guardrail, run a new audit.</div>` },
 
+  { id: "agent", title: "How the agent works", html: `
+    <h1>How the agent works</h1>
+    <p>When you start an audit, an agent does the testing. It follows the same fixed order every time, so you can predict what it did and check it in the <strong>Agent activity</strong> tab.</p>
+    <table><thead><tr><th>Step</th><th>Who</th><th>What happens</th></tr></thead><tbody>
+      <tr><td>1. Read</td><td>Parser</td><td>Splits the request into questions, finds the period and sample size, and shows you how it read them. You confirm before anything runs.</td></tr>
+      <tr><td>2. Plan</td><td>Planner</td><td>For each check, lists which sources will be read, which guardrail version applies, and what is assumed (for example a default severity).</td></tr>
+      <tr><td>3. Retrieve</td><td>Retriever</td><td>Reads the call log, messages, recordings, transcripts, consent, notices, certification and the D12 rules. Read-only.</td></tr>
+      <tr><td>4. Evaluate</td><td>Checks</td><td>Apply the rule to each call, message or notice. The result is evidenced, gap or cannot determine, with the records cited. No model decides this.</td></tr>
+      <tr><td>5. Investigate</td><td>Investigator</td><td>Where a result rests on missing evidence, it retries a failed account and looks for a recording or transcript under the same call logged by the other dialer, then runs the same check again. What it cannot settle stays <em>cannot determine</em> and goes to Follow-up.</td></tr>
+      <tr><td>6. Report</td><td>Reporter</td><td>Saves findings and citations, the activity log, and builds the letter and pack.</td></tr></tbody></table>
+    <h2>Limits that keep it honest</h2>
+    <ul><li>A gap is never hidden or softened by the investigator; it can only turn up evidence that was in another system.</li>
+      <li>Missing evidence is never counted as a pass.</li><li>The search is bounded: two retries per failed account and one lookup per call.</li>
+      <li><strong>Ask the audit</strong> answers from this audit's findings only and cannot cite a finding it did not retrieve.</li></ul>
+    <p>The same steps, with a diagram, are in <code>docs/workflow.md</code>.</p>` },
   { id: "guardrails", title: "Guardrails and weights", html: `
     <h1>Guardrails and weights</h1>
     <p>A <strong>guardrail</strong> is one testable obligation, such as "calls only inside the calling window". The platform ships with seven, one per check.</p>

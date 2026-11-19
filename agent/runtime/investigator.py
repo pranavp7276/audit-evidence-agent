@@ -112,7 +112,7 @@ class Investigator:
                 stats["mirror_resolved"] += len(moved)
             self.trace.step("investigate", "investigator",
                             (f"Account {account}: found the evidence under a mirrored session for {len(moved)} call(s); re-evaluated. "
-                             + "; ".join(f"{k}: {a} -> {b}" for k, (a, b) in moved.items())) if moved else
+                             + "; ".join(f"{k}: {a} -> {b or 'now part of the evidenced result'}" for k, (a, b) in moved.items())) if moved else
                             f"Account {account}: looked under the mirrored session(s) for {len(alt)} call(s); nothing usable there, the result stands.",
                             check_id=spec.check_id, account_id=account, status="resolved" if moved else "unresolved", detail={"mirrors": alt, "before": before, "after": after})
 

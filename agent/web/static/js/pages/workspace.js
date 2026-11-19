@@ -6,8 +6,9 @@ import { accountsTab, accountFile } from "./accounts.js";
 import { letterTab } from "./letter.js";
 import { packTab } from "./pack.js";
 import { rulesPage } from "./rules.js";
+import { agentTab, askTab } from "./agent.js";
 
-const TABS = [["summary", "Summary"], ["questions", "Questions"], ["gaps", "Gap register"], ["followup", "Follow-up"], ["accounts", "Accounts"], ["letter", "Response letter"], ["pack", "Evidence pack"], ["rules", "Rules & data"]];
+const TABS = [["summary", "Summary"], ["questions", "Questions"], ["gaps", "Gap register"], ["followup", "Follow-up"], ["accounts", "Accounts"], ["letter", "Response letter"], ["pack", "Evidence pack"], ["agent", "Agent activity"], ["ask", "Ask the audit"], ["rules", "Rules & data"]];
 
 export async function workspace(runId, tab, sub, q) {
   const d = await api(`/api/runs/${runId}`);
@@ -34,6 +35,8 @@ export async function workspace(runId, tab, sub, q) {
   else if (tab === "account") await accountFile(el, d, runId, scale, decodeURIComponent(sub || ""));
   else if (tab === "letter") await needDone(() => letterTab(el, d, runId));
   else if (tab === "pack") await needDone(() => packTab(el, d, runId));
+  else if (tab === "agent") await agentTab(el, d, runId);
+  else if (tab === "ask") await needDone(() => askTab(el, d, runId));
   else if (tab === "rules") await rulesPage(el, false, runId, done);
   if (run.status === "running") {
     state.poll = setInterval(async () => {
