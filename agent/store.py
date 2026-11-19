@@ -54,6 +54,17 @@ def save_checks(run_id: UUID, checks: list[CheckSpec], samples: dict[str, list[s
                 )
 
 
+def save_sample_references(run_id: UUID, refs: list[dict]) -> None:
+    """Record every account reference from the request, as written, and how it matched a CN account."""
+    if not refs:
+        return
+    with connect() as conn, conn.transaction(), conn.cursor() as cur:
+        cur.executemany(
+            """INSERT INTO audit.sample_references (run_id, original_ref, match_status, matched_account_id, candidates, note)
+               VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""",
+            [(run_id, r["ref"], r["status"], r["account_id"], r["candidates"], r["note"]) for r in refs])
+
+
 def save_findings(run_id: UUID, findings: list[Finding]) -> None:
     """Insert findings with their citations in one transaction.
 
@@ -94,4 +105,4 @@ def finish_run(run_id: UUID, status: str = "completed", notes: str | None = None
         )
 
 
-__all__ = ["start_run", "set_severity_scale", "save_checks", "save_findings", "finish_run"]
+__all__ = ["start_run", "set_severity_scale", "save_sample_references", "save_checks", "save_findings", "finish_run"]

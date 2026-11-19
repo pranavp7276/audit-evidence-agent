@@ -1,40 +1,49 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date
 
 from agent.checks.base import BaseCheck, cite
 from agent.contracts import Finding
 from agent.tools import get_notices
-from agent.tools.dispatch_tracker import national_holidays
-from agent.tools.policy import get_policy, policy_value
+from agent.tools.dispatch_tracker import add_business_days, business_days_between
+from agent.tools.policy import rule_at, rule_int_at
+
+_NOTICE = ("notice_type", "trigger_date", "dispatch_date", "served_date")
+_RULE = ("rule_key", "rule_value", "unit", "effective_from", "effective_to")
 
 
 class NoticeTimelineCheck(BaseCheck):
-    """Notices were served within the required timeline.
+    """Each notice was dispatched, and served, within the business days D12 allows from its trigger date.
 
-    Test per notice (subject_ref = notice id): count business days (Mon-Fri, national holidays
-    excluded: docs/decisions.md D-010) from trigger date to service date against the D12 limit.
-    gap if served late or never served. Cite the dispatch row and the holiday rows used.
-    Notices are tested over their own history, not just the audit period (D-014)."""
+    Test per notice (subject_ref = notice id), using the rules in force on the trigger date: count business days
+    (Mon-Fri, national holidays excluded; day N is inside the limit) from the trigger to dispatch and to service.
+    gap if dispatch or service is late, or has not happened although its deadline has passed.
+    cannot_determine if a deadline has not passed yet. Cite the notice, the rules and the holidays skipped.
+    Notices are tested over their own history, not only the audit period (docs/decisions.md D-014)."""
 
     check_type = "notice_timeline"
 
     def evaluate(self, account_id: str) -> list[Finding]:
-        sla = int(policy_value("notice_sla_business_days"))
-        rule = cite(get_policy()["notice_sla_business_days"], ("policy_value", "unit", "note"), "supporting")
-        fields = ("notice_type", "trigger_date", "dispatch_date", "service_date")
-        gaps, oks = [], []
+        today = date.today()
+        gaps, oks, unknown = [], [], []
         for n in get_notices(account_id):
-            notice = cite(n, fields)
-            if n["service_date"] is None:
-                gaps.append((n["notice_id"], f"Notice {n['notice_id']} has no service date.", [notice, rule]))
-                continue
-            holidays = national_holidays(n["trigger_date"], n["service_date"])
-            skip = {h["holiday_date"] for h in holidays}
-            days = [n["trigger_date"] + timedelta(days=i) for i in range(1, (n["service_date"] - n["trigger_date"]).days + 1)]
-            used = sum(1 for d in days if d.weekday() < 5 and d not in skip)
-            evt = (n["notice_id"],
-                f"Notice {n['notice_id']} was served {used} business day(s) after trigger; the limit is {sla}.",
-                   [notice, rule, *(cite(h, ("holiday_name", "scope"), "supporting") for h in holidays)])
-            (gaps if used > sla else oks).append(evt)
-        return self.assemble(account_id, gaps, oks, [], "No notices on file for this account to test.")
+            trig = n["trigger_date"]
+            d_rule, s_rule = rule_at("notice_dispatch_sla_business_days", trig), rule_at("notice_service_sla_business_days", trig)
+            d_due, d_skip = add_business_days(trig, rule_int_at("notice_dispatch_sla_business_days", trig))
+            s_due, s_skip = add_business_days(trig, rule_int_at("notice_service_sla_business_days", trig))
+            problems, pending = [], []
+            for label, actual, due in (("dispatched", n["dispatch_date"], d_due), ("served", n["served_date"], s_due)):
+                if actual is None:
+                    (problems if due < today else pending).append(f"not {label}{' although it was due by ' + str(due) if due < today else ' yet (due ' + str(due) + ')'}")
+                elif actual > due:
+                    problems.append(f"{label} on {actual}, {business_days_between(trig, actual)} business days after the trigger; due by {due}")
+            cites = [cite(n, _NOTICE), cite(d_rule, _RULE, "supporting"), cite(s_rule, _RULE, "supporting"),
+                     *(cite(h, ("holiday_name", "scope"), "supporting") for h in {h["record_key"]: h for h in d_skip + s_skip}.values())]
+            ref = f"Notice {n['notice_id']} (triggered {trig})"
+            if problems:
+                gaps.append((n["notice_id"], f"{ref}: " + "; ".join(problems) + ".", cites))
+            elif pending:
+                unknown.append((n["notice_id"], f"{ref}: " + "; ".join(pending) + ", so it cannot be judged yet."))
+            else:
+                oks.append((n["notice_id"], f"{ref} was dispatched by {n['dispatch_date']} (due {d_due}) and served by {n['served_date']} (due {s_due}).", cites))
+        return self.assemble(account_id, gaps, oks, unknown, "No notices on file for this account to test.")

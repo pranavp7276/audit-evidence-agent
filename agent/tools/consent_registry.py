@@ -1,4 +1,4 @@
-"""Consent registry (D5): consent records per account and channel."""
+"""Consent registry: consent history per recipient number, channel and purpose."""
 from __future__ import annotations
 
 from functools import lru_cache
@@ -6,14 +6,13 @@ from functools import lru_cache
 from agent.tools._common import query, with_citation
 
 
-@lru_cache(maxsize=4096)
-def _consents(account_id: str) -> tuple[dict, ...]:
-    rows = query("SELECT * FROM staging.d5_consents WHERE account_id = %s ORDER BY consent_ts_utc", (account_id,))
-    return tuple(with_citation(r, "D5", "raw.d5", "consent_id", "consent_ts") for r in rows)
+@lru_cache(maxsize=8192)
+def _consents(contact_no: str, channel: str) -> tuple[dict, ...]:
+    rows = query("SELECT * FROM staging.consents WHERE contact_no = %s AND channel = %s ORDER BY effective_ts_utc, consent_id", (contact_no, channel))
+    return tuple(with_citation(r, "consent_registry", "compliance.customer_consent", "consent_id", "effective_ts") for r in rows)
 
 
-def get_consents(account_id: str, channel: str | None = None) -> list[dict]:
-    """Consent records for an account (optionally one channel), ordered by consent time (UTC).
-
-    Each row: consent_id, channel, consent_ts_utc, consent_ts_src, status, plus citation fields."""
-    return [r for r in _consents(account_id) if channel is None or r["channel"] == channel]
+def get_consents(contact_no: str, channel: str) -> list[dict]:
+    """The consent history for one recipient number on one channel, oldest first. Each row: consent_id, purpose,
+    status (GRANTED or REVOKED), effective_ts_utc / effective_ts_src (UTC), capture_source, plus citation fields."""
+    return list(_consents(contact_no, channel))

@@ -37,7 +37,7 @@ from agent.contracts import Request as AuditRequest
 from agent.db import connect, database_url, read_rows
 from agent.pack.writer import DISPOSITIONS, build_pack, generate_letter
 from agent.parser.request_parser import _SOURCES, parse_checks, parse_sample, read_request
-from agent.pipeline import MAX_SAMPLE, contacted_accounts, process
+from agent.pipeline import MAX_SAMPLE, contacted_accounts, process, resolve_references
 from agent.tools.warehouse_sql import run_sql
 from agent.web.rules import ASSUMPTIONS, CHECK_INFO, SOURCES, STATUS_MEANING
 
@@ -49,9 +49,12 @@ _RUN_LOCK = threading.Lock()  # one run at a time: runs share the tool caches an
 app = FastAPI(title="Audit evidence platform")
 
 # citation source_table -> the column that is its record_key
-_KEYS = {"raw.d4_contact_log": "contact_id", "raw.d5": "consent_id", "raw.d10": "recording_id",
-         "raw.d11": "verification_id", "raw.d12": "policy_key", "raw.notice_dispatch": "notice_id",
-         "raw.holiday_calendar": "_row_no", "raw.collector_roster": "collector_id", "raw.cert_register": "cert_id"}
+_KEYS = {"cn_core.tele_process_instance_call_logs": "dialer_code || ':' || call_session_id",   # all status rows of the session
+         "cn_core.communication_dashboard_t": "id::text", "cn_core.digital_template": "template_id::text",
+         "compliance.customer_consent": "consent_id::text", "compliance.call_recording": "recording_id::text",
+         "compliance.call_transcript_segment": "segment_id::text", "compliance.calling_policy_rule": "rule_id::text",
+         "compliance.holiday_calendar": "holiday_id::text", "compliance.notice": "notice_id::text",
+         "compliance.collector_certification": "cert_id::text", "uamdb.users": "user_id::text"}
 _PACK_FILES = {"gap_report.csv": "text/csv", "follow_up.csv": "text/csv", "reviews.csv": "text/csv",
                "rules_and_assumptions.md": "text/markdown", "response_letter.md": "text/markdown", "index.md": "text/markdown"}
 
@@ -133,7 +136,8 @@ def config() -> dict:
 
 @app.get("/api/rules")
 def rules() -> dict:
-    policy = read_rows("SELECT policy_key, policy_value, unit, applies_to, note FROM staging.d12_policy ORDER BY source_row")
+    policy = read_rows("SELECT rule_key, rule_value, unit, counting_unit, counting_rule, effective_from, effective_to, note "
+                       "FROM staging.policy_rules ORDER BY rule_key, effective_from")
     return {"checks": CHECK_INFO, "status_meaning": STATUS_MEANING, "dispositions": DISPOSITIONS,
             "assumptions": [{"topic": k, "text": v} for k, v in ASSUMPTIONS], "policy": policy}
 
@@ -200,14 +204,15 @@ async def preview(request_id: str = Form("PREVIEW"), text: str = Form(""), sourc
         raise HTTPException(400, f"Could not interpret the request: {exc}")
     stated = parse_sample(request.text)
     accounts = stated["accounts"]
-    known = {r["account_id"] for r in read_rows(
-        "SELECT DISTINCT account_id FROM staging.d4_contacts WHERE account_id = ANY(%s)", (accounts,))} if accounts else set()
+    refs = resolve_references(accounts)
+    unmatched = [r["ref"] for r in refs if r["status"] == "unmatched"]
+    ambiguous = [{"ref": r["ref"], "note": r["note"]} for r in refs if r["status"] == "ambiguous"]
     rows = [{"check_id": c.check_id, "question_ref": c.question_ref, "question_text": c.question_text,
              "check_type": c.check_type.value, "severity": c.test.get("severity"), "sources": [s.value for s in c.sources]}
             for c in checks]
     period = stated["period"]
     return {"source": request.source, "text": request.text, "checks": rows, "scale": scale, "accounts": len(accounts),
-            "unknown_accounts": [a for a in accounts if a not in known][:100], "unknown_count": len(accounts) - len(known),
+            "matched": sum(r["status"] == "matched" for r in refs), "unmatched": unmatched[:100], "ambiguous": ambiguous[:100],
             "parser": "llm" if os.environ.get("ANTHROPIC_API_KEY") else "keyword",
             "instruction": not re.search(r"^\s*Q\d+\s*[.:)]", request.text, re.MULTILINE),
             "period": period, "size": stated["size"], "eligible": contacted_accounts(period), "max_sample": MAX_SAMPLE}
@@ -315,19 +320,28 @@ def run_detail(run_id: UUID) -> dict:
                       FROM audit.findings f WHERE f.run_id = %s""", (run_id,))
     sample = _one("SELECT count(DISTINCT account_id) AS n FROM audit.sample_accounts WHERE run_id = %s", (run_id,))["n"]
     no_data = _all("""SELECT s.account_id FROM (SELECT DISTINCT account_id FROM audit.sample_accounts WHERE run_id = %s) s
-                      WHERE NOT EXISTS (SELECT 1 FROM staging.d4_contacts c WHERE c.account_id = s.account_id)
+                      WHERE NOT EXISTS (SELECT 1 FROM staging.call_sessions c WHERE c.account_id = s.account_id)
+                        AND NOT EXISTS (SELECT 1 FROM staging.messages m WHERE m.account_id = s.account_id)
                       ORDER BY 1 LIMIT 50""", (run_id,))
+    refs = _all("""SELECT original_ref, match_status, candidates, note FROM audit.sample_references
+                   WHERE run_id = %s AND match_status <> 'matched' ORDER BY match_status, original_ref""", (run_id,))
+    total_refs = _one("SELECT count(*) AS n FROM audit.sample_references WHERE run_id = %s", (run_id,))["n"]
     collectors = _all("""
-        SELECT c.collector_id, k.agency, count(*) AS gaps, count(DISTINCT f.account_id) AS accounts,
-               array_agg(DISTINCT ck.question_ref ORDER BY ck.question_ref) AS questions
+        SELECT COALESCE(c.employee_code, 'user ' || c.collector_user_id) AS collector_id, k.agency, count(*) AS gaps,
+               count(DISTINCT f.account_id) AS accounts, array_agg(DISTINCT ck.question_ref ORDER BY ck.question_ref) AS questions
         FROM audit.findings f JOIN audit.checks ck USING (run_id, check_id)
-        JOIN staging.d4_contacts c ON c.contact_id = f.subject_ref
-        LEFT JOIN staging.collectors k ON k.collector_id = c.collector_id
-        WHERE f.run_id = %s AND f.status = 'gap' GROUP BY c.collector_id, k.agency ORDER BY gaps DESC, c.collector_id LIMIT 8""", (run_id,))
+        JOIN staging.call_sessions c ON c.session_key = f.subject_ref
+        LEFT JOIN staging.collectors k ON k.user_id = c.collector_user_id::text
+        WHERE f.run_id = %s AND f.status = 'gap'
+        GROUP BY COALESCE(c.employee_code, 'user ' || c.collector_user_id), k.agency ORDER BY gaps DESC, 1 LIMIT 8""", (run_id,))
     months = _all("""
-        SELECT to_char(date_trunc('month', c.contact_ts_utc), 'YYYY-MM') AS month, count(*) AS gaps
-        FROM audit.findings f JOIN staging.d4_contacts c ON c.contact_id = f.subject_ref
-        WHERE f.run_id = %s AND f.status = 'gap' GROUP BY 1 ORDER BY 1""", (run_id,))
+        SELECT month, count(*) AS gaps FROM (
+            SELECT to_char(date_trunc('month', c.started_ts_utc AT TIME ZONE 'Asia/Kolkata'), 'YYYY-MM') AS month
+            FROM audit.findings f JOIN staging.call_sessions c ON c.session_key = f.subject_ref WHERE f.run_id = %s AND f.status = 'gap'
+            UNION ALL
+            SELECT to_char(date_trunc('month', m.sent_ts_utc AT TIME ZONE 'Asia/Kolkata'), 'YYYY-MM')
+            FROM audit.findings f JOIN staging.messages m ON m.message_id = f.subject_ref WHERE f.run_id = %s AND f.status = 'gap') t
+        GROUP BY month ORDER BY month""", (run_id, run_id))
     review = _all(f"""SELECT f.status, COALESCE(r.disposition, 'open') AS disposition, count(*) AS n
                       FROM audit.findings f {_LATEST_REVIEW} WHERE f.run_id = %s AND f.status IN ('gap', 'cannot_determine')
                       GROUP BY 1, 2""", (run_id,))
@@ -335,7 +349,8 @@ def run_detail(run_id: UUID) -> dict:
     responses = _one("SELECT count(DISTINCT question_ref) AS n FROM audit.question_responses WHERE run_id = %s", (run_id,))["n"]
     return {"run": run, "checks": checks, "severity": severity, "totals": totals,
             "tested_checks": sum(1 for c in checks if c["accounts_tested"] > 0),
-            "coverage": {"sampled": sample, "no_data": [r["account_id"] for r in no_data]},
+            "coverage": {"sampled": sample, "no_data": [r["account_id"] for r in no_data], "references": total_refs,
+                         "unresolved": [{"ref": r["original_ref"], "status": r["match_status"], "candidates": r["candidates"], "note": r["note"]} for r in refs]},
             "collectors": collectors, "months": months, "review": review, "letter": letter,
             "responses": responses, "questions": len({c["question_ref"] for c in checks})}
 
@@ -463,27 +478,36 @@ def account_file(run_id: UUID, account_id: str) -> dict:
             flag[f["subject_ref"]] = f["status"]
     p = (account_id,)
     events: list[dict] = []
-    for r in read_rows("SELECT * FROM staging.d4_contacts WHERE account_id = %s", p):
-        what = {"call": "Call", "whatsapp": "WhatsApp message", "sms": "SMS"}.get(r["channel"], r["channel"])
-        events.append({"ts": r["contact_ts_utc"], "kind": r["channel"], "id": r["contact_id"], "source": "D4 contact log",
-                       "title": f"{what} ({r['outcome'].replace('_', ' ')})", "src_ts": r["contact_ts_src"], "tz": r["contact_ts_src_tz"],
-                       "detail": f"Collector {r['collector_id']}" + ("; dues disclosed" if r["dues_disclosed"] else "")})
-    for r in read_rows("SELECT * FROM staging.d5_consents WHERE account_id = %s", p):
-        events.append({"ts": r["consent_ts_utc"], "kind": "consent", "id": r["consent_id"], "source": "D5 consent registry",
-                       "title": f"Consent {r['status']} for {r['channel']}", "src_ts": r["consent_ts_src"], "tz": r["consent_ts_src_tz"],
-                       "detail": f"Captured via {r['capture_source']}"})
-    for r in read_rows("SELECT * FROM staging.d11_verifications WHERE account_id = %s", p):
-        events.append({"ts": r["verified_ts_utc"], "kind": "verification", "id": r["verification_id"], "source": "D11 identity verification",
-                       "title": f"Identity verification {r['result']}", "src_ts": r["verified_ts_src"], "tz": r["verified_ts_src_tz"],
-                       "detail": f"Method {r['method']}; call {r['contact_id']}"})
-    for r in read_rows("SELECT * FROM staging.d10_recordings WHERE account_id = %s", p):
-        events.append({"ts": r["recorded_ts_utc"], "kind": "recording", "id": r["recording_id"], "source": "D10 recording store",
-                       "title": "Call recording stored", "src_ts": r["recorded_ts_src"], "tz": r["recorded_ts_src_tz"],
-                       "detail": f"{r['duration_sec']} s; call {r['contact_id']}"})
+    def mask(no: str | None) -> str:
+        return "" if not no else "X" * max(len(no) - 4, 0) + no[-4:]
+
+    sessions = read_rows("SELECT * FROM staging.call_sessions WHERE account_id = %s", p)
+    for r in sessions:
+        note = ("; mirrored duplicate, counted under " + r["mirror_of"]) if r["is_mirror_duplicate"] else ""
+        if r["direction"] != "OUTBOUND":
+            note += "; inbound, not an attempt"
+        events.append({"ts": r["started_ts_utc"], "kind": "call", "id": r["session_key"], "source": f"CN Core call log ({r['dialer_code']})",
+                       "title": f"{r['direction'].title()} call ({', '.join(s.replace('_', ' ').lower() for s in r['statuses'])})",
+                       "src_ts": r["started_ts_src"], "tz": r["started_ts_src_tz"],
+                       "detail": f"To {mask(r['contact_no'])}; {(r['process_mode'] or '').lower()} mode; collector {r['employee_code'] or 'unknown'}{note}"})
+    for r in read_rows("SELECT * FROM staging.messages WHERE account_id = %s", p):
+        events.append({"ts": r["sent_ts_utc"], "kind": r["channel"].lower(), "id": r["message_id"], "source": "CN Core message log",
+                       "title": f"{r['channel'].title()} message {r['status'].lower()}", "src_ts": r["sent_ts_src"], "tz": r["sent_ts_src_tz"],
+                       "detail": f"To {mask(r['contact_no'])}; {(r['category'] or '').lower()} template {r['template_id']}"})
+    for r in read_rows("SELECT c.* FROM staging.consents c WHERE c.customer_id = (SELECT customer_id FROM staging.accounts WHERE account_id = %s)", p):
+        events.append({"ts": r["effective_ts_utc"], "kind": "consent", "id": r["consent_id"], "source": "Consent registry",
+                       "title": f"Consent {r['status'].lower()} ({r['channel'].lower()}, {r['purpose'].lower()})", "src_ts": r["effective_ts_src"],
+                       "tz": r["effective_ts_src_tz"], "detail": f"For {mask(r['contact_no'])}; captured via {r['capture_source']}"})
+    keys = [r["session_key"] for r in sessions if r["connected"]]
+    for r in (read_rows("SELECT * FROM staging.recordings WHERE session_key = ANY(%s)", (keys,)) if keys else []):
+        sess = next(x for x in sessions if x["session_key"] == r["session_key"])
+        events.append({"ts": sess["ended_ts_utc"] or sess["started_ts_utc"], "kind": "recording", "id": r["recording_id"], "source": "Recording store",
+                       "title": f"Recording {r['storage_status'].replace('_', ' ').lower()}", "src_ts": r["checked_ts_src"], "tz": "checked",
+                       "detail": f"Call {r['session_key']}" + (f"; {r['note']}" if r["note"] else "")})
     for r in read_rows("SELECT * FROM staging.notices WHERE account_id = %s", p):
         events.append({"ts": r["trigger_date"], "kind": "notice", "id": r["notice_id"], "source": "Notice dispatch history",
                        "title": f"{r['notice_type'].replace('_', ' ').title()}: triggered", "src_ts": str(r["trigger_date"]), "tz": "date",
-                       "detail": f"Dispatched {r['dispatch_date']}; served {r['service_date']}", "all_day": True})
+                       "detail": f"Dispatched {r['dispatch_date'] or 'never'}; served {r['served_date'] or 'never'}", "all_day": True})
     for e in events:
         e["flag"] = flag.get(e["id"])
         e["ts"] = e["ts"].isoformat() if hasattr(e["ts"], "isoformat") else str(e["ts"])
@@ -599,15 +623,16 @@ async def score_run(run_id: UUID, key_name: str = Form(""), account_col: str = F
 
 @app.get("/api/record")
 def record(table: str, key: str) -> dict:
-    """The full source row behind a citation, read as the read-only role from the raw layer."""
-    col = _KEYS.get(table)
-    if not col:
+    """The full source row(s) behind a citation, read as the read-only role from the source tables. A call session has
+    one row per status event (CONNECTED, DISPOSED, ...): all of them are returned."""
+    expr = _KEYS.get(table)
+    if not expr:
         raise HTTPException(400, "Unknown source table")
     schema, name = table.split(".")
-    rows = read_rows(f'SELECT * FROM "{schema}"."{name}" WHERE "{col}"::text = %s LIMIT 1', (key,))
+    rows = read_rows(f'SELECT * FROM "{schema}"."{name}" WHERE {expr} = %s ORDER BY 1 LIMIT 50', (key,))
     if not rows:
         raise HTTPException(404, "Record not found")
-    return {"table": table, "key_column": col, "record": rows[0]}
+    return {"table": table, "key_column": expr.split("::")[0].split(" || ")[0] if "||" not in expr else "dialer_code:call_session_id", "record": rows[0], "rows": rows}
 
 
 @app.post("/api/sql")

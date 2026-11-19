@@ -2,53 +2,58 @@ from __future__ import annotations
 
 from agent.checks.base import BaseCheck, cite
 from agent.contracts import Finding
-from agent.db import read_rows
-from agent.tools import get_contacts
-from agent.tools._common import with_citation
+from agent.tools import get_calls, get_recordings, get_transcripts
 
-
-def _verifications(account_id: str) -> dict[str, list[dict]]:
-    rows = read_rows("SELECT * FROM staging.d11_verifications WHERE account_id = %s ORDER BY verified_ts_utc", (account_id,))
-    out: dict[str, list[dict]] = {}
-    for r in rows:
-        out.setdefault(r["contact_id"], []).append(with_citation(r, "D11", "raw.d11", "verification_id", "verified_ts"))
-    return out
+_CALL = ("dialer_code", "direction", "process_mode", "statuses", "started_ts_src", "started_ts_src_tz")
+_SEG = ("seq", "start_offset_sec", "speaker", "tag")
+_REC = ("storage_status", "note", "checked_ts_src")
 
 
 class VerificationBeforeDisclosureCheck(BaseCheck):
-    """Identity was verified before any dues were disclosed on the call.
+    """Identity was verified before dues were first disclosed on a connected outbound call.
 
-    Test per call where dues were disclosed (subject_ref = call id). There is no transcript store
-    in this dataset (docs/decisions.md D-008), so disclosure is taken to happen at the call start
-    in D4 and the verification record comes from D11:
-      evidenced  a passed verification with verified_ts_utc before the call start
-      gap        verification after disclosure, failed, or no verification at all
-      cannot_determine  verification at exactly the call start (D-011)"""
+    Test per connected call (subject_ref = dialer:session id), from the recording's transcript offsets:
+      evidenced  a passed identity check at an earlier offset than the first disclosure of dues
+      gap        disclosure before the identity check, only a failed check, or no identity check at all
+      cannot_determine  the recording could not be read or is missing, there is no transcript, the identity step is unclear,
+                        or the pass is at exactly the disclosure offset (D-011): no claim either way
+    A call where dues were never disclosed has nothing to test. Cite the call, the recording status and the segments."""
 
     check_type = "verification_before_disclosure"
 
     def evaluate(self, account_id: str) -> list[Finding]:
-        by_call = _verifications(account_id)
+        calls = [c for c in get_calls(account_id, *self.window, attempts_only=True) if c["connected"]]
+        keys = [c["session_key"] for c in calls]
+        recs, transcripts = get_recordings(keys), get_transcripts(keys)
         gaps, oks, unknown = [], [], []
-        for c in get_contacts(account_id, *self.window, channel="call"):
-            if not (c["outcome"] == "connected" and c["dues_disclosed"]):
+        for c in calls:
+            k = c["session_key"]
+            rec, segs = recs.get(k), transcripts.get(k, [])
+            if rec is None or rec["storage_status"] != "AVAILABLE":
+                state = rec["storage_status"] if rec else "no recording record"
+                unknown.append((k, f"Call {k}: the recording is not available ({state}), so identity verification cannot be checked."))
                 continue
-            call = cite(c, ("outcome", "dues_disclosed", "contact_ts_src"))
-            fields = ("method", "result", "verified_ts_src")
-            records = by_call.get(c["contact_id"], [])
-            passed = [v for v in records if v["result"] == "passed"]
-            if any(v["verified_ts_utc"] < c["contact_ts_utc"] for v in passed):
-                v = next(v for v in passed if v["verified_ts_utc"] < c["contact_ts_utc"])
-                oks.append((c["contact_id"],
-                    f"Call {c['contact_id']}: identity verified ({v['verification_id']}) before dues were disclosed.",
-                            [call, cite(v, fields, "supporting")]))
-            elif any(v["verified_ts_utc"] == c["contact_ts_utc"] for v in passed):
-                unknown.append((c["contact_id"], "Verification time equals the call start; whether that counts as 'before' "
-                                                 "is not settled (docs/decisions.md D-011)."))
+            if not segs:
+                unknown.append((k, f"Call {k} is recorded but has no transcript, so identity verification cannot be checked."))
+                continue
+            disclosures = [s for s in segs if s["tag"] == "DUES_DISCLOSURE"]
+            if not disclosures:
+                continue  # dues were never disclosed: nothing to verify
+            first = min(float(s["start_offset_sec"]) for s in disclosures)
+            first_seg = min(disclosures, key=lambda s: float(s["start_offset_sec"]))
+            checks = [s for s in segs if s["tag"].startswith("IDENTITY_CHECK")]
+            passed = [s for s in checks if s["tag"] == "IDENTITY_CHECK_PASS"]
+            call = cite(c, _CALL)
+            support = [cite(rec, _REC, "supporting"), cite(first_seg, _SEG, "supporting"), *(cite(s, _SEG, "supporting") for s in checks)]
+            if any(s["tag"] == "UNCLEAR" for s in segs) and not passed:
+                unknown.append((k, f"Call {k}: the identity step is unclear in the transcript, so verification cannot be confirmed."))
+            elif any(float(s["start_offset_sec"]) < first for s in passed):
+                ok = min((s for s in passed if float(s["start_offset_sec"]) < first), key=lambda s: float(s["start_offset_sec"]))
+                oks.append((k, f"Call {k}: identity verified at {float(ok['start_offset_sec']):.0f}s, before dues were disclosed at {first:.0f}s.", [call, *support]))
+            elif any(float(s["start_offset_sec"]) == first for s in passed):
+                unknown.append((k, f"Call {k}: identity verification is at exactly the first disclosure offset; whether that is 'before' is not settled (D-011)."))
             else:
-                why = ("only verified after disclosure" if passed else "verification failed" if records
-                       else "no verification record exists")
-                gaps.append((c["contact_id"],
-                    f"Call {c['contact_id']} disclosed dues without prior identity verification: {why}.",
-                             [call, *(cite(v, fields, "supporting") for v in records)]))
-        return self.assemble(account_id, gaps, oks, unknown, "No connected calls with dues disclosed to test.")
+                why = (f"verified only at {min(float(s['start_offset_sec']) for s in passed):.0f}s, after the disclosure at {first:.0f}s" if passed
+                       else "the identity check failed" if checks else "no identity check appears in the call")
+                gaps.append((k, f"Call {k} disclosed dues at {first:.0f}s without prior identity verification: {why}.", [call, *support]))
+        return self.assemble(account_id, gaps, oks, unknown, "No connected outbound calls in the period to test.")

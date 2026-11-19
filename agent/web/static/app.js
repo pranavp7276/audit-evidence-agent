@@ -16,8 +16,8 @@ const duration = (a, b) => {
 const STATUS_LABEL = { evidenced: "Evidenced", gap: "Gap", cannot_determine: "Cannot determine" };
 const DISP_LABEL = { open: "Open", confirmed: "Confirmed", disputed: "Disputed", remediation_planned: "Remediation planned", evidence_obtained: "Evidence obtained" };
 const DISP_FOR = { gap: ["open", "confirmed", "disputed", "remediation_planned"], cannot_determine: ["open", "evidence_obtained"] };
-const SOURCE_TABLE = { contact: "raw.d4_contact_log", call: "raw.d4_contact_log", whatsapp: "raw.d4_contact_log", sms: "raw.d4_contact_log", consent: "raw.d5",
-  verification: "raw.d11", recording: "raw.d10", notice: "raw.notice_dispatch" };
+const SOURCE_TABLE = { call: "cn_core.tele_process_instance_call_logs", whatsapp: "cn_core.communication_dashboard_t", sms: "cn_core.communication_dashboard_t",
+  consent: "compliance.customer_consent", recording: "compliance.call_recording", notice: "compliance.notice" };
 
 async function api(path, opts) {
   const r = await fetch(path, opts);
@@ -219,7 +219,9 @@ function renderConfirm() {
         <div style="align-self:flex-end"><button type="button" id="recount">Recount accounts</button></div></div>
       <p id="elig" class="small muted" style="margin-bottom:0"></p>
       ${S.label ? `<p class="small muted" style="margin:6px 0 0">Read from the request: ${esc(S.label)}. Calls and messages outside the period are not tested; notices are tested over their own history. Days are India calendar days.</p>` : `<p class="small muted" style="margin:6px 0 0">No period given: every contact on record is tested.</p>`}
-      ${p.unknown_count ? `<div class="note"><strong>${num(p.unknown_count)} sampled account(s) have no records in the contact log</strong> (${p.unknown_accounts.slice(0, 8).map(esc).join(", ")}${p.unknown_count > 8 ? ", …" : ""}). They will be reported as <em>cannot determine</em>; check the account ids before running.</div>` : p.accounts ? `<p class="muted small">Every sampled account has records in the data.</p>` : ""}
+      ${p.accounts ? `<p class="muted small" style="margin-bottom:6px"><strong>${num(p.matched)}</strong> of ${num(p.accounts)} references matched a loan account${p.unmatched.length ? `; <strong>${p.unmatched.length} matched nothing</strong>` : ""}${p.ambiguous.length ? `; <strong>${p.ambiguous.length} are ambiguous</strong>` : ""}. They stay visible on the audit and are not tested until resolved.</p>` : ""}
+      ${p.unmatched.length ? `<div class="note"><strong>Unmatched:</strong> ${p.unmatched.slice(0, 10).map(esc).join(", ")}${p.unmatched.length > 10 ? ", …" : ""}. Check these references with the auditor.</div>` : ""}
+      ${p.ambiguous.length ? `<div class="note"><strong>Ambiguous:</strong> ${p.ambiguous.slice(0, 4).map((x) => `${esc(x.ref)} (${esc(x.note)})`).join(" · ")}</div>` : ""}
     </div>
     <div class="row"><button class="primary big" id="run" ${canRun() && p.checks.length ? "" : "disabled"}>Run audit</button><span class="muted small">A 300-account, 10-question request normally completes in a couple of minutes.</span><span id="run-err"></span></div>`;
   const sync = () => el.querySelectorAll("tr[data-i]").forEach((tr) => {
@@ -336,11 +338,12 @@ function summary(el, d, runId, scale) {
   el.innerHTML = `
     ${d.run.status === "running" ? "" : `<div class="banner ${verdictCls}"><div class="big">${gaps ? `${num(gaps)} gap${gaps === 1 ? "" : "s"} found across ${num(totals.accounts_with_gaps)} of ${num(sampled)} sampled accounts` : `No gaps found in ${num(sampled)} sampled accounts`}</div>
       <div class="muted">${severity.map((s) => `${num(s.findings)} ${esc(s.severity)}`).join(" · ")}${totals.cannot_determine ? `${gaps ? " · " : ""}${num(totals.cannot_determine)} items could not be determined and need follow-up` : ""}. Nothing is claimed as compliant without a cited record.</div></div>`}
-    ${coverage.no_data.length ? `<div class="note"><strong>Sample coverage:</strong> ${coverage.no_data.length} sampled account(s) have no records in the contact log (${coverage.no_data.slice(0, 6).map(esc).join(", ")}${coverage.no_data.length > 6 ? ", …" : ""}). Check the sample before responding.</div>` : ""}
+    ${coverage.unresolved.length ? `<div class="note"><strong>Sample coverage:</strong> ${coverage.unresolved.length} of ${num(coverage.references)} account reference(s) in the request could not be tested: ${coverage.unresolved.filter((x) => x.status === "unmatched").length} matched no loan account, ${coverage.unresolved.filter((x) => x.status === "ambiguous").length} matched more than one (${coverage.unresolved.slice(0, 4).map((x) => esc(x.ref)).join(", ")}${coverage.unresolved.length > 4 ? ", …" : ""}). They are listed in the Accounts tab and need Compliance to resolve them.</div>` : ""}
+    ${coverage.no_data.length ? `<div class="note"><strong>No activity:</strong> ${coverage.no_data.length} sampled account(s) have no calls or messages on record (${coverage.no_data.slice(0, 6).map(esc).join(", ")}${coverage.no_data.length > 6 ? ", …" : ""}).</div>` : ""}
     <div class="grid cols4">${stat(d.questions, "questions in the request")}${stat(totals.evidenced, "evidenced results", "ok")}${stat(gaps, "gap findings", "gap")}${stat(totals.cannot_determine, "cannot determine", "unk")}</div>
     <div class="grid cols2" style="margin-top:14px">
       <div class="card"><h2>Your next steps</h2><ul class="todo">
-        ${step(!coverage.no_data.length, false, "Check the sample", coverage.no_data.length ? `${coverage.no_data.length} sampled accounts have no records` : `All ${num(sampled)} sampled accounts have records`, "")}
+        ${step(!coverage.unresolved.length && !coverage.no_data.length, false, "Check the sample", coverage.unresolved.length ? `${coverage.unresolved.length} account references are unmatched or ambiguous` : coverage.no_data.length ? `${coverage.no_data.length} sampled accounts have no activity` : `All ${num(sampled)} sampled accounts matched and have activity`, "")}
         ${step(gapsTotal > 0 && gapsOpen === 0 || !gapsTotal, gapsTotal > gapsOpen, "Review the gaps", gapsTotal ? `${num(gapsTotal - gapsOpen)} of ${num(gapsTotal)} reviewed` : "No gaps to review", gapsTotal ? `#/run/${runId}/gaps` : "")}
         ${step(!cndTotal || cndOpen === 0, cndTotal > cndOpen, "Follow up what could not be determined", cndTotal ? `${num(cndTotal - cndOpen)} of ${num(cndTotal)} followed up` : "Nothing to follow up", cndTotal ? `#/run/${runId}/followup` : "")}
         ${step(d.responses >= d.questions && d.questions > 0, d.responses > 0, "Add management comments", `${d.responses} of ${d.questions} questions have a comment`, `#/run/${runId}/questions`)}
@@ -613,8 +616,8 @@ async function packTab(el, d, runId) {
 /* ---------- rules and data ---------- */
 async function rulesPage(el, standalone, runId, done) {
   const [r, src] = await Promise.all([api("/api/rules"), api("/api/data-sources")]);
-  const pol = Object.fromEntries(r.policy.map((p) => [p.policy_key, p]));
-  const lim = (keys) => (keys || []).map((k) => pol[k] ? `${esc(k.replace(/_/g, " "))}: <strong>${esc(pol[k].policy_value)}</strong> ${esc(pol[k].unit || "")}` : "").filter(Boolean).join("; ");
+  const pol = {}; r.policy.forEach((p) => (pol[p.rule_key] ||= []).push(p));
+  const lim = (keys) => (keys || []).map((k) => pol[k] ? `${esc(k.replace(/_/g, " "))}: ` + pol[k].map((p) => `<strong>${esc(p.rule_value)}</strong> ${esc(p.unit || "")} <span class="muted">(${p.effective_to ? `${fdate(p.effective_from)} to ${fdate(p.effective_to)}` : `from ${fdate(p.effective_from)}`})</span>`).join(", ") : "").filter(Boolean).join("<br>");
   el.innerHTML = `${standalone ? `<h1>Rules &amp; data</h1><p class="muted">How results are decided, the limits in force, the interpretations the platform applies, and what data it reads. Use this to defend a result to the lender.</p>` : ""}
     <div class="card"><h2>How to read a result</h2><table><tbody>${Object.entries(r.status_meaning).map(([k, v]) => `<tr><td style="width:170px">${badge(k)}</td><td>${esc(v)}</td></tr>`).join("")}</tbody></table></div>
     <div class="card"><h2>What each check tests</h2><table><thead><tr><th>Check</th><th>Passes when</th><th>Gap when</th><th>Limits in force (D12)</th><th>Sources</th></tr></thead><tbody>
@@ -635,26 +638,29 @@ async function showRecord(table, key) {
     const r = await api(`/api/record?table=${encodeURIComponent(table)}&key=${encodeURIComponent(key)}`);
     m.innerHTML = `<div class="box"><div class="row between"><h2 style="margin:0">Source record</h2><button id="close">Close</button></div>
       <p class="muted small mono">${esc(r.table)} · ${esc(r.key_column)} = ${esc(key)}</p>
-      <dl class="kv">${Object.entries(r.record).map(([k, v]) => `<dt>${esc(k)}</dt><dd class="mono">${esc(v)}</dd>`).join("")}</dl>
-      <p class="small muted">Exactly as loaded from the source file (text, in the source's own time zone).</p></div>`;
+      ${(r.rows || [r.record]).map((row, i) => `${r.rows && r.rows.length > 1 ? `<h3>Row ${i + 1} of ${r.rows.length}${row.call_status ? ` · ${esc(row.call_status)}` : ""}</h3>` : ""}<dl class="kv">${Object.entries(row).map(([k, v]) => `<dt>${esc(k)}</dt><dd class="mono">${esc(v)}</dd>`).join("")}</dl>`).join("")}
+      <p class="small muted">Exactly as held in the source table, in the source's own time zone. A call session has one row per status event.</p></div>`;
   } catch (e) { m.innerHTML = `<div class="box"><div class="err">${esc(e.message)}</div><button id="close">Close</button></div>`; }
   document.getElementById("close").onclick = () => (m.hidden = true);
 }
 
 /* ---------- advanced: data explorer ---------- */
 const SAMPLES = [
-  ["Rows loaded per source", `SELECT 'D4 contact log' AS source, count(*) AS rows FROM staging.d4_contacts
-UNION ALL SELECT 'D5 consent', count(*) FROM staging.d5_consents
-UNION ALL SELECT 'D10 recordings', count(*) FROM staging.d10_recordings
-UNION ALL SELECT 'D11 verification', count(*) FROM staging.d11_verifications
+  ["Rows per source", `SELECT 'Call sessions' AS source, count(*) AS rows FROM staging.call_sessions
+UNION ALL SELECT 'Messages', count(*) FROM staging.messages
+UNION ALL SELECT 'Consents', count(*) FROM staging.consents
+UNION ALL SELECT 'Recordings', count(*) FROM staging.recordings
+UNION ALL SELECT 'Transcript segments', count(*) FROM staging.transcript_segments
 UNION ALL SELECT 'Notices', count(*) FROM staging.notices`],
-  ["Messages sent before consent (UTC)", `SELECT c.account_id, c.contact_id, c.channel, c.contact_ts_utc AS message_utc, min(s.consent_ts_utc) AS first_consent_utc
-FROM staging.d4_contacts c LEFT JOIN staging.d5_consents s ON s.account_id = c.account_id AND s.channel = c.channel
-WHERE c.channel IN ('whatsapp', 'sms') GROUP BY c.account_id, c.contact_id, c.channel, c.contact_ts_utc
-HAVING min(s.consent_ts_utc) IS NULL OR min(s.consent_ts_utc) >= c.contact_ts_utc ORDER BY c.contact_ts_utc LIMIT 50`],
-  ["Connected calls with no recording", `SELECT c.account_id, c.contact_id, c.contact_ts_src AS call_time_ist FROM staging.d4_contacts c
-LEFT JOIN staging.d10_recordings r ON r.contact_id = c.contact_id
-WHERE c.channel = 'call' AND c.outcome = 'connected' AND r.recording_id IS NULL ORDER BY c.contact_ts_utc LIMIT 50`],
+  ["Calls after the window closes (rule in force that day)", `SELECT s.account_id, s.session_key, s.started_ts_src, s.started_ts_src_tz, (s.started_ts_utc AT TIME ZONE 'Asia/Kolkata')::time AS local_time, r.rule_value AS window_end
+FROM staging.call_sessions s JOIN staging.policy_rules r ON r.rule_key = 'calling_window_end'
+ AND (s.started_ts_utc AT TIME ZONE 'Asia/Kolkata')::date >= r.effective_from AND ((s.started_ts_utc AT TIME ZONE 'Asia/Kolkata')::date < r.effective_to OR r.effective_to IS NULL)
+WHERE s.counts_as_attempt AND NOT s.is_mirror_duplicate AND (s.started_ts_utc AT TIME ZONE 'Asia/Kolkata')::time >= r.rule_value::time ORDER BY s.started_ts_utc LIMIT 50`],
+  ["Contact numbers called over the cap in a day", `SELECT contact_no, (started_ts_utc AT TIME ZONE 'Asia/Kolkata')::date AS day, count(*) AS attempts
+FROM staging.call_sessions WHERE counts_as_attempt AND NOT is_mirror_duplicate GROUP BY 1, 2 HAVING count(*) >= 5 ORDER BY attempts DESC, day LIMIT 50`],
+  ["Sessions logged by both dialers (mirrors)", `SELECT account_id, session_key, mirror_of, started_ts_src, started_ts_src_tz FROM staging.call_sessions WHERE is_mirror_duplicate ORDER BY started_ts_utc LIMIT 50`],
+  ["Connected calls the recording store cannot confirm", `SELECT s.account_id, s.session_key, r.storage_status, r.note FROM staging.call_sessions s
+JOIN staging.recordings r ON r.session_key = s.session_key WHERE s.connected AND r.storage_status <> 'AVAILABLE' ORDER BY s.started_ts_utc LIMIT 50`],
 ];
 async function sqlPage() {
   app.innerHTML = `<h1>Data explorer</h1><p class="muted">For analysts: run a read-only SELECT against the loaded data (staging views are in UTC). Same read-only warehouse tool the agent uses.</p>

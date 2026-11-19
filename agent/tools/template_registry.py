@@ -1,10 +1,15 @@
-"""Template registry: approved message templates and their validity."""
+"""Template registry: approved message templates and the purpose each is sent for."""
 from __future__ import annotations
 
 from datetime import datetime
+from functools import lru_cache
+
+from agent.tools._common import query, with_citation
 
 
-def get_template(template_id: str, on: datetime | None = None) -> dict | None:
-    """The template version in force at a given time. There is no template registry in this
-    dataset, so this returns None; D4 only carries the template id."""
-    return None
+@lru_cache(maxsize=256)
+def get_template(template_id: int | str, on: datetime | None = None) -> dict | None:
+    """A message template: template_id, sms_category (COLLECTIONS, SERVICE or PROMOTIONAL), channel, subject.
+    The registry keeps one version per template, so `on` is accepted but not used."""
+    rows = query("SELECT template_id, sms_category, sms_dlt_id, digital_channel, template_subject FROM cn_core.digital_template WHERE template_id = %s", (int(template_id),))
+    return with_citation(rows[0], "template_registry", "cn_core.digital_template", "template_id") if rows else None

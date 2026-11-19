@@ -2,29 +2,36 @@ from __future__ import annotations
 
 from agent.checks.base import BaseCheck, cite
 from agent.contracts import Finding
-from agent.tools import get_contacts, get_recordings
+from agent.tools import get_calls, get_recordings
+
+_CALL = ("dialer_code", "statuses", "started_ts_src", "started_ts_src_tz")
+_REC = ("storage_status", "duration_sec", "note", "checked_ts_src")
 
 
 class RecordingCompletenessCheck(BaseCheck):
-    """Every connected call in a series has a recording.
+    """Every connected outbound call has a recording in the recording store.
 
-    Test per call (subject_ref = call id): gap if the contact log shows a connected call and the
-    recording store has nothing for it. Cite the contact log row for the missing call."""
+    Test per connected call (subject_ref = dialer:session id), using the retrieval status the store reports:
+      evidenced  AVAILABLE
+      gap        NOT_FOUND: the store confirms it holds no recording for the call
+      cannot_determine  RETRIEVAL_FAILED (the store could not be read) or no status record: the recording may exist
+    Cite the call and the recording status record."""
 
     check_type = "recording_completeness"
 
     def evaluate(self, account_id: str) -> list[Finding]:
-        recorded = {r["contact_id"]: r for r in get_recordings(account_id)}
-        gaps, oks = [], []
-        for c in get_contacts(account_id, *self.window, channel="call"):
-            if c["outcome"] != "connected":
-                continue
-            call = cite(c, ("outcome", "contact_ts_src"))
-            if c["contact_id"] in recorded:
-                oks.append((c["contact_id"],
-                    f"Connected call {c['contact_id']} has recording {recorded[c['contact_id']]['recording_id']}.",
-                            [call, cite(recorded[c["contact_id"]], ("duration_sec", "recorded_ts_src"), "supporting")]))
+        calls = [c for c in get_calls(account_id, *self.window, attempts_only=True) if c["connected"]]
+        recs = get_recordings([c["session_key"] for c in calls])
+        gaps, oks, unknown = [], [], []
+        for c in calls:
+            k, rec = c["session_key"], recs.get(c["session_key"])
+            call = cite(c, _CALL)
+            if rec is None:
+                unknown.append((k, f"Connected call {k} has no recording status record, so its recording cannot be confirmed."))
+            elif rec["storage_status"] == "AVAILABLE":
+                oks.append((k, f"Connected call {k} has a recording ({rec['duration_sec']} s).", [call, cite(rec, _REC, "supporting")]))
+            elif rec["storage_status"] == "NOT_FOUND":
+                gaps.append((k, f"Connected call {k} has no recording: the recording store reports none for this session.", [call, cite(rec, _REC, "supporting")]))
             else:
-                gaps.append((c["contact_id"],
-                    f"Connected call {c['contact_id']} has no recording in the recording store.", [call]))
-        return self.assemble(account_id, gaps, oks, [], "No connected calls in the contact log to test.")
+                unknown.append((k, f"Connected call {k}: the recording store could not be read ({rec['storage_status']}), so the recording cannot be confirmed."))
+        return self.assemble(account_id, gaps, oks, unknown, "No connected outbound calls in the period to test.")

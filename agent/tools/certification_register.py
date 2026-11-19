@@ -1,4 +1,4 @@
-"""Certification register and collector roster: who was certified when."""
+"""Certification register and collector roster. The contact log knows a collector by user id; the register by employee code."""
 from __future__ import annotations
 
 from functools import lru_cache
@@ -7,23 +7,23 @@ from agent.tools._common import query, with_citation
 
 
 @lru_cache(maxsize=4096)
-def _certs(collector_id: str) -> tuple[dict, ...]:
-    rows = query("SELECT * FROM staging.certifications WHERE collector_id = %s ORDER BY valid_from", (collector_id,))
-    return tuple(with_citation(r, "cert_register", "raw.cert_register", "cert_id") for r in rows)
+def _certs(employee_code: str) -> tuple[dict, ...]:
+    rows = query("SELECT * FROM staging.certifications WHERE employee_code = %s ORDER BY valid_from", (employee_code,))
+    return tuple(with_citation(r, "cert_register", "compliance.collector_certification", "cert_id") for r in rows)
 
 
 @lru_cache(maxsize=4096)
-def _roster(collector_id: str) -> dict | None:
-    rows = query("SELECT * FROM staging.collectors WHERE collector_id = %s", (collector_id,))
-    return with_citation(rows[0], "collector_roster", "raw.collector_roster", "collector_id") if rows else None
+def _collector(user_id: str) -> dict | None:
+    rows = query("SELECT * FROM staging.collectors WHERE user_id = %s", (str(user_id),))
+    return with_citation(rows[0], "collector_roster", "uamdb.users", "user_id") if rows else None
 
 
-def get_certifications(collector_id: str) -> list[dict]:
-    """Certificates for a collector. Each row: cert_id, cert_name, valid_from, valid_to (inclusive
-    dates), plus citation fields."""
-    return list(_certs(collector_id))
+def get_certifications(employee_code: str) -> list[dict]:
+    """Certificates for a collector by employee code. Each row: cert_id, certification, certificate_no, valid_from,
+    valid_to (both inclusive dates), plus citation fields."""
+    return list(_certs(employee_code))
 
 
-def get_collector(collector_id: str) -> dict | None:
-    """The collector's roster row, or None if the id is unknown."""
-    return _roster(collector_id)
+def get_collector(user_id: int | str) -> dict | None:
+    """The collector's roster row (employee_code, agency, status), or None if the user id is unknown."""
+    return _collector(str(user_id))

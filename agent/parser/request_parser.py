@@ -33,13 +33,13 @@ _KEYWORDS: list[tuple[CheckType, tuple[str, ...]]] = [
     (CheckType.RECORDING_COMPLETENESS, ("recording",)),
 ]
 _SOURCES: dict[CheckType, list[SourceSystem]] = {
-    CheckType.CONSENT_BEFORE_CONTACT: [SourceSystem.D4, SourceSystem.D5],
-    CheckType.CALLING_HOURS: [SourceSystem.D4, SourceSystem.D12],
-    CheckType.CALLING_FREQUENCY: [SourceSystem.D4, SourceSystem.D12],
-    CheckType.VERIFICATION_BEFORE_DISCLOSURE: [SourceSystem.D4, SourceSystem.D11],
+    CheckType.CONSENT_BEFORE_CONTACT: [SourceSystem.CONTACT_LOG, SourceSystem.CONSENT_REGISTRY, SourceSystem.TEMPLATE_REGISTRY],
+    CheckType.CALLING_HOURS: [SourceSystem.CONTACT_LOG, SourceSystem.D12],
+    CheckType.CALLING_FREQUENCY: [SourceSystem.CONTACT_LOG, SourceSystem.D12],
+    CheckType.VERIFICATION_BEFORE_DISCLOSURE: [SourceSystem.CONTACT_LOG, SourceSystem.RECORDING_STORE, SourceSystem.TRANSCRIPT_STORE],
     CheckType.NOTICE_TIMELINE: [SourceSystem.NOTICE_DISPATCH, SourceSystem.D12, SourceSystem.HOLIDAY_CALENDAR],
-    CheckType.AGENT_CERTIFICATION: [SourceSystem.D4, SourceSystem.CERT_REGISTER],
-    CheckType.RECORDING_COMPLETENESS: [SourceSystem.D4, SourceSystem.D10],
+    CheckType.AGENT_CERTIFICATION: [SourceSystem.CONTACT_LOG, SourceSystem.CERT_REGISTER, SourceSystem.COLLECTOR_ROSTER],
+    CheckType.RECORDING_COMPLETENESS: [SourceSystem.CONTACT_LOG, SourceSystem.RECORDING_STORE],
     CheckType.OTHER: [],
 }
 
@@ -65,7 +65,8 @@ def read_request(path: str | Path, request_id: str) -> Request:
 
 
 def extract_sample_accounts(text: str) -> list[str]:
-    """Account ids listed after a 'Sampled accounts:' heading, in order, without duplicates."""
+    """Account references listed after a 'Sampled accounts:' heading, in order, without duplicates, exactly as written.
+    They can be loan account numbers (what an auditor uses) or CN account ids; see agent.pipeline.resolve_references."""
     m = _ACCOUNT_BLOCK.search(text)
     return list(dict.fromkeys(t for t in re.split(r"[,\s]+", m.group(1)) if t)) if m else []
 

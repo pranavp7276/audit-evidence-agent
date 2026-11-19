@@ -2,58 +2,72 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from agent.checks.base import RULE_TZ, BaseCheck, cite
+from agent.checks.base import RULE_TZ, BaseCheck, cite, mask
 from agent.contracts import Finding
-from agent.tools import get_contacts
-from agent.tools.policy import get_policy, policy_time, policy_value
+from agent.tools import get_calls
+from agent.tools.policy import rule_at, rule_int_at, rule_time_at
 
-_CALL_FIELDS = ("channel", "outcome", "contact_ts_src")
-_RULE_FIELDS = ("policy_value", "unit", "note")
+_CALL = ("dialer_code", "contact_no", "direction", "process_mode", "statuses", "started_ts_src", "started_ts_src_tz")
+_RULE = ("rule_key", "rule_value", "unit", "counting_unit", "counting_rule", "effective_from", "effective_to")
 
 
 class CallingHoursCheck(BaseCheck):
-    """Every call was placed within permitted hours. Limits come from D12, never hard-coded.
+    """Every outbound call attempt started inside the calling window in force on that date. D12 supplies the window.
 
-    Test per call (subject_ref = call id), in the time zone the D12 rule is defined in
-    (see docs/decisions.md): evidenced if inside the window, gap if outside.
-    Cite both the call record (D4) and the D12 rule row.
-    """
+    Test per call session (subject_ref = dialer:session id). The dialer's own timestamp is converted to the policy's
+    zone (IST) first, then compared with the window rule effective on the local call date (the rule can change over
+    time). A session with several status rows is one call; a call mirrored in both dialers counts once; inbound calls
+    and system failures are not attempts. Cite the call and the rule rows used."""
 
     check_type = "calling_hours"
 
     def evaluate(self, account_id: str) -> list[Finding]:
-        start, end = policy_time("calling_hours_start"), policy_time("calling_hours_end")
-        rules = [cite(get_policy()[k], _RULE_FIELDS, "supporting") for k in ("calling_hours_start", "calling_hours_end")]
         gaps, oks = [], []
-        for c in get_contacts(account_id, *self.window, channel="call"):
-            local = c["contact_ts_utc"].astimezone(RULE_TZ)
-            inside = start <= local.time().replace(tzinfo=None) < end
-            evt = (c["contact_id"],
-                   f"Call {c['contact_id']} at {local:%Y-%m-%d %H:%M} local was {'inside' if inside else 'outside'} "
-                   f"the permitted {start:%H:%M}-{end:%H:%M}.", [cite(c, _CALL_FIELDS), *rules])
+        for s in get_calls(account_id, *self.window, attempts_only=True):
+            local = s["started_ts_utc"].astimezone(RULE_TZ)
+            day = local.date()
+            lo, hi = rule_time_at("calling_window_start", day), rule_time_at("calling_window_end", day)
+            inside = lo <= local.time().replace(tzinfo=None) < hi
+            rules = [cite(rule_at("calling_window_start", day), _RULE, "supporting"), cite(rule_at("calling_window_end", day), _RULE, "supporting")]
+            evt = (s["session_key"],
+                   f"Call {s['session_key']} started {local:%Y-%m-%d %H:%M:%S} IST (logged {s['started_ts_src']} {s['started_ts_src_tz']}), "
+                   f"{'inside' if inside else 'outside'} the permitted {lo:%H:%M}-{hi:%H:%M} on that date.", [cite(s, _CALL), *rules])
             (oks if inside else gaps).append(evt)
-        return self.assemble(account_id, gaps, oks, [], "No calls in the contact log to test.")
+        return self.assemble(account_id, gaps, oks, [], "No outbound call attempts in the period to test.")
 
 
 class CallingFrequencyCheck(BaseCheck):
-    """Calls per account per period stayed within the D12 limit.
+    """Call attempts to one contact number on one IST calendar day stayed within the D12 cap in force that day.
 
-    Test per account per period (subject_ref = period, e.g. '2026-05-14' or '2026-W20'):
-    gap if attempts or connects exceed the D12 limit. Cite every call in the breaching
-    period plus the D12 rule. Day boundaries are computed in the rule's time zone.
-    """
+    Test per contact number per day (subject_ref = 'contact number|date'). Counted: distinct outbound call sessions to
+    that number, across both dialers and both modes (manual and campaign); a session's several status rows and a call
+    mirrored in both dialers count once; system failures and inbound calls do not count. gap if the count exceeds the
+    cap: the first session past the cap is cited as the primary record, the rest as supporting, with the rule."""
 
     check_type = "calling_frequency"
 
     def evaluate(self, account_id: str) -> list[Finding]:
-        limit = int(policy_value("max_calls_per_day"))
-        rule = cite(get_policy()["max_calls_per_day"], _RULE_FIELDS, "supporting")
         by_day = defaultdict(list)
-        for c in get_contacts(account_id, *self.window, channel="call"):
-            by_day[c["contact_ts_utc"].astimezone(RULE_TZ).date()].append(c)
+        for s in get_calls(account_id, *self.window, attempts_only=True):
+            by_day[(s["contact_no"], s["started_ts_utc"].astimezone(RULE_TZ).date())].append(s)
+        duplicates = defaultdict(int)
+        for s in get_calls(account_id, *self.window, include_duplicates=True):
+            if s["is_mirror_duplicate"]:
+                duplicates[(s["contact_no"], s["started_ts_utc"].astimezone(RULE_TZ).date())] += 1
         gaps, oks = [], []
-        for day, calls in sorted(by_day.items()):
-            evt = (day.isoformat(), f"{len(calls)} call attempt(s) on {day}; the limit is {limit} per day.",
-                   [*(cite(c, _CALL_FIELDS) for c in calls), rule])
-            (gaps if len(calls) > limit else oks).append(evt)
-        return self.assemble(account_id, gaps, oks, [], "No calls in the contact log to test.")
+        for (contact, day), calls in sorted(by_day.items(), key=lambda kv: (kv[0][1], kv[0][0])):
+            cap = rule_int_at("max_attempts_per_contact_per_day", day)
+            rule = cite(rule_at("max_attempts_per_contact_per_day", day), _RULE, "supporting")
+            n, dup = len(calls), duplicates.get((contact, day), 0)
+            note = f" ({dup} mirrored duplicate(s) counted once)" if dup else ""
+            if n > cap:
+                over = calls[cap]  # the first attempt past the cap
+                others = [c for c in calls if c is not over]
+                evt = (f"{contact}|{day}", f"{n} eligible attempts to {mask(contact)} on {day} against a cap of {cap}{note}; "
+                       f"call {over['session_key']} was the one that exceeded it.",
+                       [cite(over, _CALL), *(cite(c, _CALL, "supporting") for c in others), rule])
+                gaps.append(evt)
+            else:
+                oks.append((f"{contact}|{day}", f"{n} eligible attempt(s) to {mask(contact)} on {day}; the cap is {cap}{note}.",
+                            [*(cite(c, _CALL) for c in calls), rule]))
+        return self.assemble(account_id, gaps, oks, [], "No outbound call attempts in the period to test.")

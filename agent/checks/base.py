@@ -11,6 +11,11 @@ RULE_TZ = ZoneInfo("Asia/Kolkata")  # zone D12 hours/limits and the cert registe
 Event = tuple[str, str, list[Citation]]  # (subject_ref, reason, citations)
 
 
+def mask(number: str | None) -> str:
+    """A phone number with all but the last four digits hidden, for text that goes into reasons and letters."""
+    return "n/a" if not number else "X" * max(len(number) - 4, 0) + number[-4:]
+
+
 def _plain(v):
     return v if v is None or isinstance(v, (str, int, float, bool)) else (v.isoformat() if hasattr(v, "isoformat") else str(v))
 
