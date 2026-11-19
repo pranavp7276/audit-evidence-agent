@@ -30,6 +30,7 @@ from agent.db import connect, read_rows
 from agent.pack.writer import build_pack
 from agent.parser.request_parser import read_request
 from agent.pipeline import process
+from agent.tools.warehouse_sql import run_sql
 
 ROOT = Path(__file__).resolve().parents[2]
 STATIC = Path(__file__).parent / "static"
@@ -201,6 +202,21 @@ def findings(run_id: UUID, check_id: str | None = None, status: str | None = Non
                  f.subject_ref NULLS FIRST
         LIMIT %s OFFSET %s""", (*params, scale, max(1, min(limit, 500)), max(0, offset)))
     return {"total": total, "rows": rows}
+
+
+@app.post("/api/sql")
+async def sql(request: Request) -> dict:
+    """Ad-hoc read-only SELECT through the warehouse SQL tool (read-only role, keyword filter, timeout)."""
+    body = await request.json()
+    try:
+        out = run_sql(str(body.get("query", "")), max_rows=int(body.get("max_rows", 500)))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:  # database errors: show the message, not a stack trace
+        diag = getattr(exc, "diag", None)
+        raise HTTPException(400, (diag.message_primary if diag and diag.message_primary else str(exc)))
+    cols = list(out["rows"][0]) if out["rows"] else []
+    return {"columns": cols, "rows": [list(r.values()) for r in out["rows"]], "truncated": out["truncated"]}
 
 
 @app.get("/api/record")

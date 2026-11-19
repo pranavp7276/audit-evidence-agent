@@ -67,9 +67,11 @@ function parseHash() {
 async function route() {
   stopPolling();
   const { parts, q } = parseHash();
-  document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === "runs"));
+  const section = parts[0] === "sql" ? "sql" : "runs";
+  document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === section));
   try {
-    if (parts[0] === "run" && parts[1]) await runPage(parts[1], parts[2] || "overview", q);
+    if (parts[0] === "sql") await sqlPage();
+    else if (parts[0] === "run" && parts[1]) await runPage(parts[1], parts[2] || "overview", q);
     else await homePage();
   } catch (e) {
     app.innerHTML = `<div class="err">${esc(e.message)}</div><p><a href="#/">Back to audit runs</a></p>`;
@@ -327,6 +329,96 @@ async function scoreTab(el, runId, done) {
         ${row("Claims without a citation", s.unsupported_claims, s.unsupported_claims === 0, "0")}</tbody></table>${list("Missed gaps", s.missed)}${list("False gaps", s.false_gaps)}`;
     } catch (e) { out.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
   });
+}
+
+/* ---------- SQL query ---------- */
+const SAMPLES = [
+  ["Rows loaded per source", `SELECT 'D4 contact log' AS source, count(*) AS rows FROM staging.d4_contacts
+UNION ALL SELECT 'D5 consent', count(*) FROM staging.d5_consents
+UNION ALL SELECT 'D10 recordings', count(*) FROM staging.d10_recordings
+UNION ALL SELECT 'D11 verification', count(*) FROM staging.d11_verifications
+UNION ALL SELECT 'Notices', count(*) FROM staging.notices
+UNION ALL SELECT 'Collectors', count(*) FROM staging.collectors`],
+  ["Messages sent before consent (compared in UTC)", `SELECT c.account_id, c.contact_id, c.channel, c.contact_ts_utc AS message_utc,
+       min(s.consent_ts_utc) AS first_consent_utc
+FROM staging.d4_contacts c
+LEFT JOIN staging.d5_consents s ON s.account_id = c.account_id AND s.channel = c.channel
+WHERE c.channel IN ('whatsapp', 'sms')
+GROUP BY c.account_id, c.contact_id, c.channel, c.contact_ts_utc
+HAVING min(s.consent_ts_utc) IS NULL OR min(s.consent_ts_utc) >= c.contact_ts_utc
+ORDER BY c.contact_ts_utc
+LIMIT 50`],
+  ["Calls outside the D12 calling hours (IST)", `SELECT c.account_id, c.contact_id, c.contact_ts_src AS call_time_ist, c.collector_id
+FROM staging.d4_contacts c, staging.d12_policy s, staging.d12_policy e
+WHERE c.channel = 'call' AND s.policy_key = 'calling_hours_start' AND e.policy_key = 'calling_hours_end'
+  AND NOT ((c.contact_ts_utc AT TIME ZONE 'Asia/Kolkata')::time >= s.policy_value::time
+       AND (c.contact_ts_utc AT TIME ZONE 'Asia/Kolkata')::time <  e.policy_value::time)
+ORDER BY c.contact_ts_utc
+LIMIT 50`],
+  ["Account-days over the daily call limit", `SELECT account_id, (contact_ts_utc AT TIME ZONE 'Asia/Kolkata')::date AS day, count(*) AS calls
+FROM staging.d4_contacts, staging.d12_policy p
+WHERE channel = 'call' AND p.policy_key = 'max_calls_per_day'
+GROUP BY account_id, day, p.policy_value
+HAVING count(*) > p.policy_value::int
+ORDER BY calls DESC, day`],
+  ["Connected calls with no recording", `SELECT c.account_id, c.contact_id, c.contact_ts_src AS call_time_ist
+FROM staging.d4_contacts c
+LEFT JOIN staging.d10_recordings r ON r.contact_id = c.contact_id
+WHERE c.channel = 'call' AND c.outcome = 'connected' AND r.recording_id IS NULL
+ORDER BY c.contact_ts_utc
+LIMIT 50`],
+  ["Calls by collectors with no valid certificate that day", `SELECT c.account_id, c.contact_id, c.collector_id,
+       (c.contact_ts_utc AT TIME ZONE 'Asia/Kolkata')::date AS call_date
+FROM staging.d4_contacts c
+WHERE c.channel = 'call' AND NOT EXISTS (
+  SELECT 1 FROM staging.certifications x WHERE x.collector_id = c.collector_id
+    AND (c.contact_ts_utc AT TIME ZONE 'Asia/Kolkata')::date BETWEEN x.valid_from AND x.valid_to)
+ORDER BY call_date
+LIMIT 50`],
+  ["Dues disclosed without prior verification", `SELECT c.account_id, c.contact_id, c.contact_ts_utc AS call_utc, v.verified_ts_utc, v.result
+FROM staging.d4_contacts c
+LEFT JOIN staging.d11_verifications v ON v.contact_id = c.contact_id
+WHERE c.outcome = 'connected' AND c.dues_disclosed
+  AND (v.verification_id IS NULL OR v.result <> 'passed' OR v.verified_ts_utc >= c.contact_ts_utc)
+ORDER BY c.contact_ts_utc
+LIMIT 50`],
+];
+
+async function sqlPage() {
+  app.innerHTML = `<h1>SQL query</h1>
+    <p class="muted">Run a read-only SELECT against the data. Timestamps in the <span class="mono">staging</span> views are already UTC (<span class="mono">*_utc</span>). This is the same warehouse SQL tool the agent uses: read-only role, one statement, 30 s limit.</p>
+    <div class="card">
+      <div class="row between"><div style="flex:1;min-width:240px"><label for="samp">Sample queries</label>
+        <select id="samp">${SAMPLES.map(([n], i) => `<option value="${i}">${esc(n)}</option>`).join("")}</select></div>
+        <div class="row" style="align-self:flex-end"><button class="primary" id="go">Run query</button><span class="small muted">Ctrl+Enter</span></div></div>
+      <label for="q" style="margin-top:12px">Query</label><textarea id="q" spellcheck="false" style="min-height:190px"></textarea>
+      <p class="small muted" style="margin-bottom:0">Views: staging.d4_contacts · d5_consents · d10_recordings · d11_verifications · d12_policy · notices · holidays · collectors · certifications</p>
+    </div><div id="res"></div>`;
+  const q = document.getElementById("q"), samp = document.getElementById("samp");
+  const load = () => { q.value = SAMPLES[+samp.value][1]; };
+  const run = async () => {
+    const res = document.getElementById("res");
+    res.innerHTML = `<div class="card muted">Running…</div>`;
+    const t0 = performance.now();
+    try {
+      const r = await api("/api/sql", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query: q.value }) });
+      const ms = Math.round(performance.now() - t0);
+      res.innerHTML = `<div class="card"><div class="row between"><div class="muted small">${num(r.rows.length)} row${r.rows.length === 1 ? "" : "s"}${r.truncated ? " (truncated)" : ""} · ${ms} ms</div>
+        ${r.rows.length ? `<button id="csv">Download CSV</button>` : ""}</div>
+        ${r.rows.length ? `<div style="overflow:auto;max-height:520px;margin-top:8px"><table><thead><tr>${r.columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>
+          ${r.rows.map((row) => `<tr>${row.map((v) => `<td class="${typeof v === "number" ? "num" : ""}">${esc(v)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>` : `<div class="empty">The query returned no rows.</div>`}</div>`;
+      const b = document.getElementById("csv");
+      if (b) b.onclick = () => {
+        const cell = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+        const csv = [r.columns, ...r.rows].map((row) => row.map(cell).join(",")).join("\n");
+        const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" })); a.download = "query_result.csv"; a.click();
+      };
+    } catch (e) { res.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  };
+  samp.addEventListener("change", () => { load(); run(); });
+  document.getElementById("go").onclick = run;
+  q.addEventListener("keydown", (e) => { if (e.ctrlKey && e.key === "Enter") run(); });
+  load(); run();
 }
 
 /* ---------- boot ---------- */

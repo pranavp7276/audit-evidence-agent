@@ -25,6 +25,6 @@ def run_sql(query: str, params: dict[str, Any] | None = None, max_rows: int = MA
     if not re.match(r"^\s*(select|with)\b", stripped, re.IGNORECASE) or _FORBIDDEN.search(stripped):
         raise ValueError("Only read-only SELECT / WITH queries are allowed.")
     with connect(read_only=True) as conn:
-        cur = conn.execute(stripped, params or {})
+        cur = conn.execute(stripped, params or None)
         rows = cur.fetchmany(max_rows + 1)
     return {"query": stripped, "rows": rows[:max_rows], "truncated": len(rows) > max_rows}
