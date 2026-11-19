@@ -127,6 +127,7 @@ ASSUMPTIONS = [
     ("Templates", "A template counts as approved from its approval date (UTC) until it is retired. A message sent before approval, after retirement, or on a template that is pending, rejected or expired, is a gap."),
     ("Collector status and caller IDs", "Status history and caller ID registrations are effective-dated; both ends are inclusive and the call date is the IST date. A caller number is checked against the collector's agency."),
     ("Reference contacts", "A reference contact is a number the borrower named for someone else (contact type REFERENCE). Dues disclosed to one is a gap; with no readable transcript the result is cannot determine."),
+    ("Retention", "The platform keeps six months of activity (calls, recordings, transcripts, messages, notices). A period that starts earlier cannot be evidenced for the part before that: those items are cannot determine, never compliant. Consent events, certificates, collector status, registered caller IDs, templates and D12 rules are standing records and are kept."),
     ("Account references", "References in a request are matched to CN loan accounts by loan account number or CN account id. A reference that matches "
                            "nothing, or more than one loan, stays visible and is not tested until Compliance resolves it."),
     ("Gaps are never softened", "Disputing a gap in review adds a note; it does not remove the gap from the report or the letter."),

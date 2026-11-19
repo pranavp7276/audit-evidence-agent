@@ -17,10 +17,19 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from agent.knowledge.search import warm
 from agent.web.common import STATIC
 from agent.web.routers import accounts, agent, intake, knowledge, letter, pack, records, reference, runs
 
 app = FastAPI(title="Audit evidence platform")
+
+
+@app.on_event("startup")
+def _warm_policy_search() -> None:
+    """Embed the policy library in the background so search can use the model's vectors (agent/knowledge/search.py)."""
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        warm()
+
 
 @app.middleware("http")
 async def password_gate(request: Request, call_next):

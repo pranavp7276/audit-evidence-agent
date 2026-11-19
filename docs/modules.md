@@ -9,7 +9,7 @@ The audit plan, issue register, exceptions register, risk matrix, alerts and cro
 | Conducting audits, real-time evidence collection | Audit work > Audits, New audit request | The agent reads the request, plans, retrieves, tests and investigates; the audit page shows what it is doing as it happens | `services/audit.py`, `runtime/` |
 | Workflow management | The strip under each audit's title | Request read, Tested, Gaps reviewed, Letter approved; plus the five stages inside an audit | `pages/workspace.js` |
 | Reports (PDF) | Audit work > Reports | Per audit: summary, lender brief, response letter, evidence pack, gap report, agent trace. PDF is the browser's save-as-PDF on a report page | `pages/reports.js`, `pages/brief.js` |
-| Forms management | Forms and rules > Guardrails | The checklist of obligations an audit tests, versioned, with severity and review priority | `knowledge/guardrails.py` |
+| Forms management | Forms and rules > Guardrails | The checklist of obligations an audit tests, versioned, with severity and review priority | `knowledge/guardrails.py`; policy search by meaning: `knowledge/search.py` (Faiss) |
 | Compliance management | Forms and rules > Compliance library, Rules & data | The circulars and policies the guardrails come from; the limits in force | `pages/kb.js`, `pages/rules.js` |
 | Mobile access | Every screen | The menu becomes a strip across the top at phone width; tables scroll sideways | `style.css` |
 

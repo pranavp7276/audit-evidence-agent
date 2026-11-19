@@ -10,6 +10,7 @@ from psycopg.types.json import Jsonb
 from agent.core.db import connect
 from agent.intake.request_parser import read_request
 from agent.knowledge.guardrails import SEVERITY_DEFAULT, split_clauses, suggest
+from agent.knowledge.search import search
 from agent.web.common import _all, _one
 
 router = APIRouter()
@@ -28,6 +29,12 @@ def kb_list() -> list[dict]:
                           (SELECT count(*) FROM audit.kb_clause c WHERE c.doc_id = d.doc_id) AS clauses,
                           (SELECT count(DISTINCT g.guardrail_id) FROM audit.guardrail g WHERE g.source_doc_id = d.doc_id) AS guardrails
                    FROM audit.kb_document d ORDER BY d.created_at DESC""")
+
+
+@router.get("/api/kb-search")
+def kb_search(q: str, k: int = 5, doc_type: str = "") -> dict:
+    """The clauses closest in meaning to a question (Faiss over clause embeddings)."""
+    return search(q, min(max(k, 1), 20), doc_type or None)
 
 
 @router.post("/api/kb")

@@ -11,6 +11,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from agent.core.contracts import CheckSpec, CheckType
 from agent.core.contracts import Request as AuditRequest
+from agent.core.retention import period_note
 from agent.intake.request_parser import _SOURCES, parse_checks_with_info, parse_sample, read_request
 from agent.intake.sampling import MAX_SAMPLE, contacted_accounts, resolve_references
 from agent.services import store
@@ -64,7 +65,7 @@ async def preview(request_id: str = Form("PREVIEW"), text: str = Form(""), sourc
             "matched": sum(r["status"] == "matched" for r in refs), "unmatched": unmatched[:100], "ambiguous": ambiguous[:100],
             "parser": info["reader"], "models": info["models"], "parser_note": info["note"],
             "instruction": not re.search(r"^\s*Q\d+\s*[.:)]", request.text, re.MULTILINE),
-            "period": period, "size": stated["size"], "eligible": contacted_accounts(period), "max_sample": MAX_SAMPLE}
+            "period": period, "retention_note": period_note(period), "size": stated["size"], "eligible": contacted_accounts(period), "max_sample": MAX_SAMPLE}
 
 
 @router.get("/api/population")

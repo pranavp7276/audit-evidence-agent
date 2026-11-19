@@ -1,7 +1,7 @@
 """Build the common sandbox "CN book" (datasets D1 to D13) in the CN Core replica, and the ground truth for the CO-04 checks.
 
 Structure: db/migrations/V005 and V009 (table names are CN Core's; the `book` schema exposes the sandbox's own D1..D13 field names).
-Proposed volumes at --scale 1.0: 100,000 delinquent accounts, 85,000 borrowers, 3 lenders (a bank, an NBFC, an MFI), 12 months of history,
+Proposed volumes at --scale 1.0: 100,000 delinquent accounts, 85,000 borrowers, 3 lenders (a bank, an NBFC, an MFI), six months of history,
 1.2M repayment rows, 3M contact attempts, 60,000 transcribed calls, 150,000 promises, 400,000 payments, 20,000 borrowers' bank statements,
 85,000 bureau snapshots a month, 85,000 consent/DND records, 400 templates, about 200 policy documents.
 The default --scale 0.1 keeps every ratio and fits a small database; use 1.0 only on a database sized for ~6 million rows.
@@ -35,23 +35,21 @@ from retired import (  # what db/migrations/V017 removed; rows for it are not ge
 ROOT = Path(__file__).resolve().parents[1]
 IST = timezone(timedelta(hours=5, minutes=30))
 AS_OF = date(2026, 11, 19)
-START, END = date(2025, 11, 3), date(2026, 10, 29)  # 12 months of history
-MONTHS = [(2025, 11), (2025, 12)] + [(2026, m) for m in range(1, 11)]
+START, END = date(2026, 5, 20), date(2026, 11, 17)  # the last six months: the platform keeps no activity older than that (docs/decisions.md D-030)
+MONTHS = [(2026, m) for m in range(5, 12)]
 EPOCH = date(2025, 1, 1)
 
 # ---------------------------------------------------------------------------- lenders and their D12 rules (re-stated independently in the oracle)
 LENDERS = [("BANK01", "Sahyadri Bank", "BANK", 0.45), ("NBFC01", "Kaveri Finserv", "NBFC", 0.35), ("MFI01", "Ganga Microfinance", "MFI", 0.20)]
 WINDOW_START = {"BANK01": time(8, 0), "NBFC01": time(8, 0), "MFI01": time(9, 0)}
-WINDOW_END = {"BANK01": [(EPOCH, date(2026, 4, 1), time(19, 0)), (date(2026, 4, 1), None, time(18, 50))],
+WINDOW_END = {"BANK01": [(EPOCH, date(2026, 8, 3), time(19, 0)), (date(2026, 8, 3), None, time(18, 50))],
               "NBFC01": [(EPOCH, None, time(19, 0))], "MFI01": [(EPOCH, None, time(18, 0))]}
-DAILY_CAP = {"BANK01": [(EPOCH, date(2026, 6, 1), 4), (date(2026, 6, 1), None, 5)], "NBFC01": [(EPOCH, None, 3)], "MFI01": [(EPOCH, None, 2)]}
+DAILY_CAP = {"BANK01": [(EPOCH, date(2026, 7, 1), 4), (date(2026, 7, 1), None, 5)], "NBFC01": [(EPOCH, None, 3)], "MFI01": [(EPOCH, None, 2)]}
 NOTICE_DISPATCH_BDAYS, NOTICE_SERVE_BDAYS = 3, 7
 NATIONAL_HOLIDAYS = {
-    date(2025, 11, 5): "Guru Nanak Jayanti", date(2025, 12, 25): "Christmas", date(2026, 1, 26): "Republic Day", date(2026, 3, 4): "Holi",
-    date(2026, 4, 3): "Good Friday", date(2026, 8, 15): "Independence Day", date(2026, 10, 2): "Gandhi Jayanti", date(2026, 11, 8): "Diwali",
-    date(2026, 12, 25): "Christmas", date(2027, 1, 26): "Republic Day"}
-STATE_HOLIDAYS = [(date(2026, 1, 15), "Pongal", "TN"), (date(2026, 5, 1), "Maharashtra Day", "MH"), (date(2026, 8, 26), "Onam", "KL"),
-                  (date(2026, 11, 1), "Karnataka Rajyotsava", "KA"), (date(2025, 11, 1), "Karnataka Rajyotsava", "KA")]
+    date(2026, 5, 27): "Bakri Id", date(2026, 8, 15): "Independence Day", date(2026, 9, 4): "Janmashtami", date(2026, 10, 2): "Gandhi Jayanti", date(2026, 10, 20): "Dussehra",
+    date(2026, 11, 8): "Diwali", date(2026, 12, 25): "Christmas", date(2027, 1, 26): "Republic Day"}
+STATE_HOLIDAYS = [(date(2026, 8, 26), "Onam", "KL"), (date(2026, 9, 14), "Ganesh Chaturthi", "MH"), (date(2026, 11, 1), "Karnataka Rajyotsava", "KA")]
 
 CITIES = [("Mumbai", "MH", "mr"), ("Pune", "MH", "mr"), ("Bengaluru", "KA", "kn"), ("Mysuru", "KA", "kn"), ("Chennai", "TN", "ta"), ("Coimbatore", "TN", "ta"),
           ("Hyderabad", "TS", "te"), ("Vijayawada", "AP", "te"), ("Delhi", "DL", "hi"), ("Lucknow", "UP", "hi"), ("Jaipur", "RJ", "hi"), ("Kolkata", "WB", "en")]
@@ -219,10 +217,10 @@ def main(scale: float, seed: int) -> None:
             if code:
                 onboard, r = date(2024, 6, 1) + timedelta(days=rnd.randint(0, 400)), rnd.random()
                 if r < 0.06:  # leaves during the period: terminated from that day
-                    left = date(2026, 2, 1) + timedelta(days=rnd.randint(0, 240))
+                    left = START + timedelta(days=rnd.randint(10, 150))
                     rows = [("ACTIVE", onboard, left - timedelta(days=1)), ("TERMINATED", left, None)]
                 elif r < 0.10:  # a spell of inactivity
-                    a0 = date(2026, 1, 1) + timedelta(days=rnd.randint(0, 220))
+                    a0 = START + timedelta(days=rnd.randint(5, 120))
                     b0 = a0 + timedelta(days=rnd.randint(20, 50))
                     rows = [("ACTIVE", onboard, a0 - timedelta(days=1)), ("INACTIVE", a0, b0), ("ACTIVE", b0 + timedelta(days=1), None)]
                 else:
@@ -232,7 +230,7 @@ def main(scale: float, seed: int) -> None:
                     status_id += 1
                     add("compliance.collector_status", status_id=status_id, employee_code=code, status=st, valid_from=f, valid_to=t)
             cli_id += 1
-            reg_from[u["user_id"]] = START + timedelta(days=rnd.randint(60, 200)) if u["user_id"] in late_reg else EPOCH
+            reg_from[u["user_id"]] = START + timedelta(days=rnd.randint(20, 140)) if u["user_id"] in late_reg else EPOCH
             add("compliance.registered_cli", cli_id=cli_id, cli_number=u["contact_no"], organization_id=u["organization_id"], purpose="COLLECTIONS", valid_from=reg_from[u["user_id"]], valid_to=None)
 
         def active_on(ag, d):
@@ -278,7 +276,7 @@ def main(scale: float, seed: int) -> None:
         for oid, ags in agents_by_org.items():
             for a in ags:
                 link += 1
-                add("cn_core.tele_process_instance_user_link", id=link, tele_process_instance_id=pinst[(oid, "MANUAL", 2025, 11)], user_id=a["user_id"], user_group_id=oid)
+                add("cn_core.tele_process_instance_user_link", id=link, tele_process_instance_id=pinst[(oid, "MANUAL", MONTHS[0][0], MONTHS[0][1])], user_id=a["user_id"], user_group_id=oid)
 
         # ================================================================ D12 rules (per lender, effective-dated), holidays, notice limits
         rid = 0
@@ -316,9 +314,9 @@ def main(scale: float, seed: int) -> None:
             status = rnd.choices(["APPROVED", "PENDING", "REJECTED", "EXPIRED"], [0.88, 0.04, 0.04, 0.04])[0]
             approved_at = retired_at = None
             if status == "APPROVED":
-                approved_at = datetime.combine(START + timedelta(days=rnd.randint(90, 260)) if t in late_approved else date(2025, 1, 1) + timedelta(days=rnd.randint(0, 270)), time(0, 0))
+                approved_at = datetime.combine(START + timedelta(days=rnd.randint(20, 140)) if t in late_approved else date(2025, 1, 1) + timedelta(days=rnd.randint(0, 270)), time(0, 0))
             elif status == "EXPIRED":
-                approved_at, retired_at = datetime(2025, 1, 1) + timedelta(days=rnd.randint(0, 200)), datetime.combine(START + timedelta(days=rnd.randint(60, 300)), time(0, 0))
+                approved_at, retired_at = datetime(2025, 1, 1) + timedelta(days=rnd.randint(0, 200)), datetime.combine(START + timedelta(days=rnd.randint(15, 150)), time(0, 0))
             add("cn_core.digital_template", template_id=t, sms_category=cat, sms_dlt_id=f"DLT{1000 + t}", digital_channel=channel, template_subject=f"{cat.title()} {lang} v{t % 5 + 1}",
                 template_body=CATEGORY_TEXT[cat][lang], language=lang, approval_status=status, approved_at=approved_at, retired_at=retired_at)
             tmpl_info[t] = (status, approved_at, retired_at)
@@ -504,7 +502,7 @@ def main(scale: float, seed: int) -> None:
         sessions, by_acct = [], defaultdict(list)
         for a in accts:
             nums = [r["contact_no"] for r in ccn[a["customer_id"]]]
-            for d in sorted(rnd.sample(range(n_days), rnd.randint(7, 15))):
+            for d in sorted(rnd.sample(range(n_days), rnd.randint(4, 8))):
                 day = START + timedelta(days=d)
                 s = make_session(a, nums[0] if rnd.random() < 0.8 else nums[-1], local_dt(day, 9, 0) + timedelta(seconds=rnd.randint(0, 8 * 3600 + 1800)))
                 sessions.append(s)
@@ -577,9 +575,9 @@ def main(scale: float, seed: int) -> None:
                 continue
             r = rnd.random()
             if r < 0.08:
-                spans = [(date(2025, 1, 1) + timedelta(days=rnd.randint(0, 120)), date(2025, 12, 1) + timedelta(days=rnd.randint(0, 270)))]
+                spans = [(date(2025, 1, 1) + timedelta(days=rnd.randint(0, 120)), date(2026, 5, 1) + timedelta(days=rnd.randint(0, 180)))]
             elif r < 0.12:
-                lapse = date(2026, 1, 1) + timedelta(days=rnd.randint(0, 200))
+                lapse = START + timedelta(days=rnd.randint(0, 150))
                 spans = [(date(2025, 1, 1), lapse), (lapse + timedelta(days=rnd.randint(30, 70)), date(2027, 12, 31))]
             elif r < 0.15:
                 spans = []
@@ -688,7 +686,7 @@ def main(scale: float, seed: int) -> None:
         for a in accts:
             nums = [r["contact_no"] for r in ccn[a["customer_id"]]]
             lang = a["_cust"]["preferred_language_code"]
-            for _ in range(rnd.randint(8, 22)):
+            for _ in range(rnd.randint(4, 11)):
                 day = START + timedelta(days=rnd.randrange(n_days))
                 ts = local_dt(day, 9, 0) + timedelta(seconds=rnd.randint(0, 9 * 3600))
                 ch = rnd.choices(["WHATSAPP", "SMS", "EMAIL"], [0.45, 0.35, 0.20])[0]
@@ -847,7 +845,7 @@ def main(scale: float, seed: int) -> None:
                 continue
             stt = a["_cust"]["state"]
             for _ in range(200):
-                trig = date(2025, 11, 4) + timedelta(days=rnd.randint(0, 340))
+                trig = START + timedelta(days=rnd.randint(0, 150))
                 if trig.weekday() >= 5 or trig in nat:
                     continue
                 both = nat | {d for d, _, s in STATE_HOLIDAYS if s == stt}
@@ -1004,7 +1002,7 @@ REQUEST = """Subject: Audit request CO-04 - outsourced collections, FY26 sample
 
 From: Internal Audit, Example Lender Group (synthetic request)
 
-Please provide evidence for the {n} sampled loan accounts listed below (by loan account number), covering November 2025 to October 2026.
+Please provide evidence for the {n} sampled loan accounts listed below (by loan account number), covering May 2026 to November 2026.
 
 Q1. For every WhatsApp or SMS message sent, show that the borrower had given consent before it was sent.
 Q2. Confirm that every collection call was made within the permitted calling hours.

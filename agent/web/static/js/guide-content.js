@@ -158,7 +158,7 @@ within the previous month. Sample size 300.</pre> Every guardrail is tested unle
 
   { id: "data", title: "Working with the data", html: `
     <h1>Working with the data</h1>
-    <p>The platform tests a replica of the CN Core collections schema in a shared Supabase Postgres: delinquent loans of three fictional lenders (a bank, an NBFC and an MFI) with 12 months of history. All data is synthetic. Table names are CN Core's; to query the data with the sandbox's D1 to D13 field names, use the <code>book</code> schema.</p>
+    <p>The platform tests a replica of the CN Core collections schema in a shared Supabase Postgres: delinquent loans of three fictional lenders (a bank, an NBFC and an MFI) with six months of history (the platform keeps no activity older than six months). All data is synthetic. Table names are CN Core's; the <code>book</code> schema gives the sandbox's own field names for the datasets that remain.</p>
     <h2>Where things are</h2>
     <table><thead><tr><th>Schema</th><th>Holds</th></tr></thead><tbody>
       <tr><td><code>cn_core</code></td><td>Customers, loan accounts, cases, contact numbers, the call-status log, activity log, message log, templates</td></tr>

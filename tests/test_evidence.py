@@ -177,3 +177,46 @@ def test_no_check_fails_to_run_on_real_data():
         spec = CheckSpec(check_id="Q", question_ref="Q", question_text="t", check_type=ct, sample={}, test={"severity": "Major"}, sources=[])
         failed = [f.reason for f in cls(spec, ["Critical", "Major", "Minor"]).run(accts) if f.reason.startswith("Check failed to run")]
         assert not failed, f"{ct.value}: {failed[0]}"
+
+
+# ---------------------------------------------------------------- the six-month retention window
+
+
+def test_the_horizon_is_six_calendar_months_back():
+    from agent.core.retention import horizon
+    assert horizon(date(2026, 11, 20)) == date(2026, 5, 20)
+    assert horizon(date(2026, 8, 31)) == date(2026, 2, 28)       # a shorter month
+    assert horizon(date(2026, 3, 15)) == date(2025, 9, 15)       # across a year end
+    assert horizon(date(2024, 8, 31)) == date(2024, 2, 29)       # a leap year
+
+
+def test_a_period_before_the_horizon_is_flagged_and_one_inside_it_is_not():
+    from agent.core.retention import period_note
+    today = date(2026, 11, 20)
+    inside = {"start": "2026-06-01", "end": "2026-11-01", "label": "x"}
+    reaching_back = {"start": "2025-11-01", "end": "2026-11-01", "label": "x"}
+    assert period_note(inside, today) is None and period_note(None, today) is None
+    note = period_note(reaching_back, today)
+    assert note and "20 May 2026" in note and "cannot determine" in note
+
+
+def test_the_planner_says_so_when_the_period_reaches_past_the_window():
+    from agent.core.retention import horizon
+    from agent.core.trace import Trace
+    from agent.runtime.planner import build_plan
+    old = {"start": (horizon().replace(year=horizon().year - 1)).isoformat(), "end": date.today().isoformat(), "label": "last year"}
+    trace = Trace()
+    build_plan([], 10, old, "random sample", 0, trace)
+    assert any(s["detail"].get("retention") for s in trace.steps)
+
+
+@needs_db
+def test_a_retention_dry_run_counts_and_changes_nothing():
+    from agent.core.db import read_rows
+    from agent.services.retention import purge
+    before = read_rows("SELECT (SELECT count(*) FROM cn_core.tele_process_instance_call_logs) AS calls, (SELECT count(*) FROM cn_core.communication_dashboard_t) AS msgs")[0]
+    out = purge(date.today())
+    after = read_rows("SELECT (SELECT count(*) FROM cn_core.tele_process_instance_call_logs) AS calls, (SELECT count(*) FROM cn_core.communication_dashboard_t) AS msgs")[0]
+    assert before == after and out["applied"] is False and set(out["removed"]) >= {"calls", "messages", "notices"}
+    # consent events, certificates and the rules are standing records: no step touches them
+    assert not any(k in out["removed"] for k in ("consents", "certificates", "policy rules"))

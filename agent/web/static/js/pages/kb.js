@@ -18,6 +18,10 @@ export async function kbPage() {
   const docs = await api("/api/kb");
   app.innerHTML = `${rulebookNav("#/kb")}<h1>Compliance library ${help("guardrails")}</h1>
     <p class="muted">The circulars, policies and SOPs that guardrails come from. Upload one, split it into clauses, and turn each testable obligation into a guardrail linked to its clause.</p>
+    <div class="card"><h2>Search by meaning</h2>
+      <p class="small muted">Ask in plain words, for example "calls after the permitted hours". The closest clauses across every document come back, best first. It points to policy text; it is not evidence for a result.</p>
+      <form id="kbs" class="row"><input type="text" name="q" placeholder="What does policy say about…" style="flex:1" required><button class="primary">Search</button></form>
+      <div id="kbsr"></div></div>
     <div class="card"><h2>Documents</h2>
       ${docs.length ? `<table><thead><tr><th>Document</th><th>Type</th><th>Reference</th><th>Effective</th><th class="num">Clauses</th><th class="num">Guardrails</th></tr></thead><tbody>
         ${docs.map((d) => `<tr class="click" data-doc="${d.doc_id}"><td><strong>${esc(d.title)}</strong><div class="small muted">${esc(d.issuer || "")} · added by ${esc(d.uploaded_by)}</div></td><td>${esc(d.doc_type)}</td><td>${esc(d.reference_no || "—")}</td><td class="small">${d.effective_date ? fdate(d.effective_date) : "—"}</td><td class="num">${num(d.clauses)}</td><td class="num">${num(d.guardrails)}</td></tr>`).join("")}</tbody></table>` : `<div class="empty">No documents yet. Add one below.</div>`}</div>
@@ -32,6 +36,15 @@ export async function kbPage() {
       <div style="margin-top:12px"><div class="row between"><label>…or paste the text</label><button type="button" class="link" id="kbsample">Use a sample circular</button></div><textarea name="text" id="kbtext" placeholder="Numbered clauses, one obligation each, work best."></textarea></div>
       <div class="row" style="margin-top:12px"><button class="primary">Add document</button><span id="kberr"></span></div></form></div>`;
   app.querySelectorAll("tr[data-doc]").forEach((tr) => tr.addEventListener("click", () => navigate(`#/kb/${tr.dataset.doc}`)));
+  document.getElementById("kbs").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const box = document.getElementById("kbsr"); box.innerHTML = `<p class="small muted">Searching…</p>`;
+    try {
+      const r = await api(`/api/kb-search?q=${encodeURIComponent(ev.target.q.value)}&k=6`);
+      box.innerHTML = `<p class="small muted">${r.hits.length} closest of ${num(r.indexed)} clauses · ${esc(r.backend)}${r.warming ? " (the language model is still preparing; results improve shortly)" : ""}</p>` + r.hits.map((h) =>
+        `<div style="padding:10px 0;border-top:1px solid var(--border)"><div class="row between"><div><a href="#/kb/${h.doc_id}"><strong>${esc(h.document)}</strong></a> <span class="tag">${esc(h.clause_no)}</span></div><span class="small muted">${h.also_in ? `also in ${h.also_in} other document${h.also_in > 1 ? "s" : ""} · ` : ""}${Math.round(h.similarity * 100)}% match</span></div><div class="small" style="margin-top:4px">${esc(h.text)}</div></div>`).join("");
+    } catch (e) { box.innerHTML = `<span class="badge b-failed">${esc(e.message)}</span>`; }
+  });
   document.getElementById("kbsample").onclick = () => {
     document.getElementById("kbtext").value = SAMPLE_CIRCULAR;
     const f = document.getElementById("kbf"); f.title.value = "Sample: fair practices on collection calls (synthetic)"; f.issuer.value = "Example Regulator"; f.reference_no.value = "SYN/2026/04"; f.effective_date.value = "2026-04-01";

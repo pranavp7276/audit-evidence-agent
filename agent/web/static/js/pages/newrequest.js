@@ -92,6 +92,7 @@ function renderConfirm() {
         ${listed ? "" : `<div><label for="sz">Sample size</label><input id="sz" type="number" min="1" max="${p.max_sample}" value="${esc(S.size)}" placeholder="300"></div>`}
         <div style="align-self:flex-end"><button type="button" id="recount">Recount accounts</button></div></div>
       <p id="elig" class="small muted" style="margin-bottom:0"></p>
+      ${p.retention_note ? `<div class="note"><strong>Retention.</strong> ${esc(p.retention_note)}</div>` : ""}
       ${S.label ? `<p class="small muted" style="margin:6px 0 0">Read from the request: ${esc(S.label)}. Calls and messages outside the period are not tested; notices are tested over their own history. Days are India calendar days.</p>` : `<p class="small muted" style="margin:6px 0 0">No period given: every contact on record is tested.</p>`}
       ${p.accounts ? `<p class="muted small" style="margin-bottom:6px"><strong>${num(p.matched)}</strong> of ${num(p.accounts)} references matched a loan account${p.unmatched.length ? `; <strong>${p.unmatched.length} matched nothing</strong>` : ""}${p.ambiguous.length ? `; <strong>${p.ambiguous.length} are ambiguous</strong>` : ""}. They stay visible on the audit and are not tested until resolved.</p>` : ""}
       ${p.unmatched.length ? `<div class="note"><strong>Unmatched:</strong> ${p.unmatched.slice(0, 10).map(esc).join(", ")}${p.unmatched.length > 10 ? ", …" : ""}. Check these references with the auditor.</div>` : ""}

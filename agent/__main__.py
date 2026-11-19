@@ -36,6 +36,18 @@ def tags(write: bool = True) -> None:
         raise SystemExit(1)
 
 
+def retention(apply: bool) -> None:
+    import os
+
+    from agent.services.retention import purge
+    if apply and os.environ.get("ALLOW_PURGE") != "1":
+        raise SystemExit("This deletes old activity from the shared database; set ALLOW_PURGE=1 once the team agrees.")
+    out = purge(apply=apply)
+    print(f"retention horizon {out['horizon']}: " + ("removed" if apply else "would remove (nothing was changed)"))
+    for k, v in out["removed"].items():
+        print(f"  {k:<24} {v:>9,}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="python -m agent")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -44,6 +56,8 @@ def main() -> None:
     r.add_argument("--id", required=True, dest="request_id")
     t = sub.add_parser("tags", help="check the evidence tags against the database; writes docs/evidence_coverage.md")
     t.add_argument("--no-write", action="store_true", help="print the summary only")
+    rt = sub.add_parser("retention", help="remove activity older than six months (counts only unless --apply)")
+    rt.add_argument("--apply", action="store_true")
     s = sub.add_parser("serve", help="start the web platform")
     s.add_argument("--host", default="127.0.0.1", help="use 0.0.0.0 to let coworkers on your network connect")
     s.add_argument("--port", type=int, default=8000)
@@ -52,6 +66,8 @@ def main() -> None:
         run(args.request, args.request_id)
     elif args.cmd == "tags":
         tags(write=not args.no_write)
+    elif args.cmd == "retention":
+        retention(apply=args.apply)
     else:
         import uvicorn
 

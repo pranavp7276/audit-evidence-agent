@@ -10,6 +10,7 @@ from __future__ import annotations
 from agent.checks import REGISTRY
 from agent.checks.catalog import CHECK_INFO
 from agent.core.contracts import CheckSpec
+from agent.core.retention import period_note
 from agent.core.toolkit import REGISTRY as TOOLS
 from agent.core.trace import Trace
 
@@ -19,6 +20,8 @@ def build_plan(checks: list[CheckSpec], sample_size: int, period: dict | None, o
     trace.step("plan", "planner", f"Plan for {len(checks)} check(s) over {sample_size:,} sampled account(s)"
                + (f" in {period['label']}" if period else " (no period stated: every contact on record)") + f". Sample: {origin}.",
                detail={"checks": len(checks), "accounts": sample_size, "period": period, "origin": origin})
+    if note := period_note(period):
+        trace.step("plan", "planner", note, status="info", detail={"retention": True})
     if unresolved_refs:
         trace.step("plan", "planner", f"{unresolved_refs} account reference(s) in the request are unmatched or ambiguous: they are kept visible and not tested.",
                    status="info", detail={"unresolved_references": unresolved_refs})

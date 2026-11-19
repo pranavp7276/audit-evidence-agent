@@ -1,7 +1,7 @@
 # The CN book: tables, data, and which sandbox dataset each serves
 
-Every team works on the same synthetic **CN book**: delinquent loan accounts across three fictional lenders (a bank, an NBFC and an MFI) with 12 months of
-history (November 2025 to October 2026). The tables keep **CN Core's names** (from the supplied CN_CORE and UAMDB DDL); the `book` schema gives the
+Every team works on the same synthetic **CN book**: delinquent loan accounts across three fictional lenders (a bank, an NBFC and an MFI) with six months of
+history (20 May to 17 November 2026): the platform keeps no activity older than six months (docs/decisions.md D-030). The tables keep **CN Core's names** (from the supplied CN_CORE and UAMDB DDL); the `book` schema gives the
 sandbox's own field names for the datasets that remain as views.
 
 The database holds only what an audit check, or a sandbox dataset the problem statement names, reads (docs/decisions.md D-029). Which evidence tag lives
@@ -31,11 +31,21 @@ column of a kept table that nothing read; the loose-file `raw` schema; and a str
 
 The proposed full volumes are no longer a goal: `gen_book.py --scale 1.0` still scales the kept datasets.
 
+## Retention: six months
+
+Calls, recordings, transcripts, messages and notices older than six months are not kept. `python -m agent retention` shows what is older than the
+horizon (today less six months) and removes it with `--apply` (needs `ALLOW_PURGE=1` on a shared database). Standing records that a result inside the
+window can depend on are kept: consent events (a consent given before the window still covers a message inside it), certificates, collector status,
+registered caller IDs, templates and the D12 rules. Audits, findings and their citation extracts are the audit's own records and are never purged.
+
+An audit period that starts before the horizon is told so in three places: the confirm step, the plan in the agent's activity, and the letter's
+assumptions. Anything that depends on records before the horizon is cannot determine, never compliant.
+
 ## The three lenders
 
 | Lender (`institution_code`) | Type | Products | Calling hours (D12) | Daily attempts per contact number |
 |---|---|---|---|---|
-| Sahyadri Bank (`BANK01`) | Bank | Personal loan, business loan, credit card | 08:00 to 19:00; to **18:50 from 1 Apr 2026** | **4**; **5 from 1 Jun 2026** |
+| Sahyadri Bank (`BANK01`) | Bank | Personal loan, business loan, credit card | 08:00 to 19:00; to **18:50 from 3 Aug 2026** | **4**; **5 from 1 Jul 2026** |
 | Kaveri Finserv (`NBFC01`) | NBFC | Two-wheeler, consumer durable, business loan | 08:00 to 19:00 | 3 |
 | Ganga Microfinance (`MFI01`) | MFI | Group and individual micro-loans | 09:00 to 18:00 | 2 |
 
