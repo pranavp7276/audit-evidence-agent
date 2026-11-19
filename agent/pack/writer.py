@@ -63,9 +63,15 @@ def _cites(c: list[dict]) -> str:
     return "; ".join(f"{x['source_system']}:{x['record_key']}" for x in c)
 
 
-def _rank(scale: list[str]):
-    r = {s: i for i, s in enumerate(scale)}
-    return lambda f: (r.get(f["severity"], len(r)), f["check_id"], f["account_id"], f["subject_ref"] or "")
+def _weights(checks: list[dict]) -> dict[str, int]:
+    """Review-priority weight (1 to 3) of the guardrail each check applied. It orders review only."""
+    return {c["check_id"]: int((c["test_definition"] or {}).get("priority_weight", 1)) for c in checks}
+
+
+def _rank(scale: list[str], weights: dict[str, int] | None = None):
+    """Gaps most severe first, then heavier guardrail weight first, then by check and account. Every gap is kept."""
+    r, w = {s: i for i, s in enumerate(scale)}, weights or {}
+    return lambda f: (r.get(f["severity"], len(r)), -w.get(f["check_id"], 1), f["check_id"], f["account_id"], f["subject_ref"] or "")
 
 
 def _question_groups(d: dict) -> dict[str, list[dict]]:
@@ -133,7 +139,7 @@ def generate_letter(run_id: UUID) -> str:
             if g:
                 bysev = Counter(f["severity"] for f in g)
                 out += ["**Gaps, stated as found:** " + ", ".join(f"{k}: {v}" for k, v in bysev.items()) + ".", ""]
-                out += [f"- {f['account_id']} ({f['subject_ref'] or 'account'}): {f['reason']}" for f in sorted(g, key=_rank(scale))[:5]]
+                out += [f"- {f['account_id']} ({f['subject_ref'] or 'account'}): {f['reason']}" for f in sorted(g, key=_rank(scale, _weights(d["checks"])))[:5]]
                 if len(g) > 5:
                     out.append(f"- ... and {len(g) - 5} more; see the gap report (annex).")
                 disp = Counter(f["disposition"] or "open" for f in g)
@@ -177,14 +183,15 @@ def build_pack(run_id: UUID) -> str:
                 w.writerow([f["finding_id"], f["account_id"], f["subject_ref"] or "", f["status"], f["severity"] or "",
                             f["reason"], _cites(cs), json.dumps([c["extract"] for c in cs if c["extract"]]), *review(f)])
 
-    gaps = sorted((f for f in findings if f["status"] == "gap"), key=_rank(scale))
+    weights = _weights(checks)
+    gaps = sorted((f for f in findings if f["status"] == "gap"), key=_rank(scale, weights))
     with (folder / "gap_report.csv").open("w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
-        w.writerow(["severity", "question_ref", "check_id", "account_id", "subject_ref", "reason", "citations", "finding_id",
+        w.writerow(["severity", "priority_weight", "question_ref", "check_id", "account_id", "subject_ref", "reason", "citations", "finding_id",
                     "review_status", "reviewer", "review_comment"])
         for f in gaps:
-            w.writerow([f["severity"], qref[f["check_id"]], f["check_id"], f["account_id"], f["subject_ref"] or "", f["reason"],
-                        _cites(cites[f["finding_id"]]), f["finding_id"], *review(f)])
+            w.writerow([f["severity"], weights.get(f["check_id"], 1), qref[f["check_id"]], f["check_id"], f["account_id"], f["subject_ref"] or "",
+                        f["reason"], _cites(cites[f["finding_id"]]), f["finding_id"], *review(f)])
     with (folder / "follow_up.csv").open("w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["question_ref", "check_id", "account_id", "subject_ref", "why", "finding_id", "review_status", "reviewer", "review_comment"])

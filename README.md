@@ -24,7 +24,7 @@ python -m agent serve                                          # http://127.0.0.
 python -m agent serve --host 0.0.0.0                           # let coworkers on your network connect
 APP_PASSWORD=choose-one python -m agent serve --host 0.0.0.0   # require a password (any user name)
 ```
-The auditor's workflow, start to finish:
+The data is a CN Core replica (docs/cn_core_model.md). The auditor's workflow, start to finish:
 1. **New audit request:** upload or paste the request (PDF, `.eml`, text), either numbered questions or a plain
    instruction such as *"Run a compliance audit for all accounts contacted in the previous month, sample size 300"*
    (every guardrail is tested, the period is read, and 300 accounts are drawn from those contacted in it). The platform shows how each question
@@ -39,7 +39,11 @@ The auditor's workflow, start to finish:
 6. **Response letter:** generated from the findings and your comments, edited, versioned and taken through
    draft, compliance review and approved (approval is blocked while placeholders remain).
 7. **Evidence pack:** zip with index, extracts, gap report, follow-up list, review trail, letter, rules.
-8. **Rules & data:** the D12 limits in force, what each check tests, the assumptions, and the data read.
+8. **Knowledge base and Guardrails:** upload a circular, policy or SOP; it is split into clauses and draft guardrails are suggested from
+   them. Compliance reviews and publishes each guardrail with a default severity and a priority weight (1 to 3, with a recorded reason above 1).
+   Weights only order the review queue (severity first, then weight); they never decide or hide a gap. Guardrails are versioned and each audit
+   records the version it applied.
+9. **Rules & data:** the D12 limits in force, what each check tests, the assumptions, and the data read.
 
 Findings are never edited. Reviews, management comments and letter versions are append-only tables
 (`db/migrations/V003__auditor_workflow.sql`). `ANTHROPIC_API_KEY` switches the request reader from the keyword

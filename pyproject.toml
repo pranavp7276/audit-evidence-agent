@@ -40,5 +40,7 @@ select = ["E", "F", "I"]
 "agent/parser/request_parser.py" = ["E501"]  # question wording
 "agent/checks/*.py" = ["E501"]  # finding reasons read as sentences
 "agent/pipeline.py" = ["E501"]
+"agent/guardrails.py" = ["E501"]
+"tests/*.py" = ["E501"]
 "agent/tools/*.py" = ["E501"]  # docstrings that describe the rows
 "scripts/gen_cn_core.py" = ["E501"]  # data generator

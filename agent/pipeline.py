@@ -11,6 +11,7 @@ from agent.checks import REGISTRY
 from agent.checks.base import RULE_TZ
 from agent.contracts import CheckSpec, Request
 from agent.db import read_rows
+from agent.guardrails import published_for
 from agent.parser.request_parser import parse_checks, parse_sample
 from agent.tools import clear_caches
 
@@ -123,6 +124,10 @@ def process(run_id: UUID, request: Request, accounts: list[str] | None = None, r
             c.sample = {"source": origin, "accounts": len(sample), **({"period": period} if period else {})}
             if period:
                 c.test = {**c.test, "period": period}
+            g = published_for(c.check_type.value) if c.check_type.value != "other" else None
+            if g:  # the guardrail version this audit applied, its default severity and its review-priority weight
+                c.test = {**c.test, "guardrail": {"id": g["guardrail_id"], "version": g["version"], "title": g["title"]},
+                          "default_severity": g["default_severity"], "priority_weight": g["priority_weight"]}
         store.save_checks(run_id, checks, {c.check_id: sample for c in checks})
         for spec in checks:
             check_cls = REGISTRY.get(spec.check_type)

@@ -40,8 +40,12 @@ class BaseCheck(ABC):
 
     @property
     def severity(self) -> str:
-        """Severity for this check's gaps: the request's label for the question, else its most severe label."""
-        return self.spec.test.get("severity") or (self.severity_scale[0] if self.severity_scale else "Unrated")
+        """Severity for this check's gaps: the request's own label for the question; else the applied guardrail's default if it
+        is on the request's scale (or the request gave no scale); else the most severe label on the scale."""
+        label = self.spec.test.get("severity") or self.spec.test.get("default_severity")
+        if label and (not self.severity_scale or label in self.severity_scale):
+            return label
+        return self.severity_scale[0] if self.severity_scale else "Unrated"
 
     @property
     def window(self) -> tuple[datetime | None, datetime | None]:
