@@ -46,11 +46,9 @@ The agent's roles and limits are in `docs/workflow.md`.
 
 ## The screens
 
-The menu follows the modules of an audit-management product; the mapping, and what each module does here, is in `docs/modules.md`.
+The menu follows the audit work (docs/modules.md):
 
-- **Overview**: Dashboard, Alerts.
-- **Plan and conduct**: Audit plan, Audits, New audit request.
-- **Findings and follow-up**: Exceptions, Issues, Risk, Reports.
+- **Audit work**: Audits, New audit request, Reports.
 - **Forms and rules**: Guardrails, Compliance library, Rules & data. There is one copy of the rules, shared by every audit.
 - **Help**: Guide; the Data explorer (advanced) sits at the bottom.
 

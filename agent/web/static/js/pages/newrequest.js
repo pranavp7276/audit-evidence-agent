@@ -2,12 +2,8 @@ import { app, state, api, esc, num, help, info, needName, navigate } from "../co
 
 const draft = { form: {}, preview: null };
 
-export async function newRequestPage(q = {}) {
+export async function newRequestPage() {
   const examples = await api("/api/examples");
-  if (q.plan && draft.plan !== q.plan) {  // started from the audit plan: take its title, lender and due date
-    const p = (await api("/api/plan")).rows.find((x) => String(x.plan_id) === String(q.plan));
-    if (p) { draft.plan = q.plan; draft.preview = null; draft.form = { rid: p.title.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "AUDIT", lender: p.lender || "", due: p.due_date ? String(p.due_date).slice(0, 10) : "", text: p.scope || "", accts: "" }; }
-  }
   const f = draft.form;
   app.innerHTML = `
     <h1>New audit request ${help("audit")}</h1>
@@ -154,7 +150,6 @@ function renderConfirm() {
     if (new Set(ids).size !== ids.length || ids.some((x) => !x)) { document.getElementById("run-err").innerHTML = `<span class="badge b-failed">Each check needs its own id</span>`; return; }
     const who = needName(); if (!who) return;
     const fd = new FormData(), f = draft.form;
-    if (draft.plan) fd.append("plan_id", draft.plan);
     fd.append("request_id", f.rid); fd.append("lender", f.lender || ""); fd.append("response_due", f.due || ""); fd.append("created_by", who);
     fd.append("text", p.text); fd.append("source", p.source); fd.append("accounts", f.accts || "");
     if (S.start && S.end) { fd.append("period_start", S.start); fd.append("period_end", S.end); fd.append("period_label", S.label && S.start === (p.period || {}).start && S.end === (p.period || {}).end ? S.label : ""); }
@@ -163,7 +158,7 @@ function renderConfirm() {
     const btn = document.getElementById("run"); btn.disabled = true; btn.textContent = "Starting…";
     try {
       const r = await api("/api/runs", { method: "POST", body: fd });
-      draft.preview = null; draft.form = {}; draft.plan = null;
+      draft.preview = null; draft.form = {};
       navigate(`#/run/${r.run_id}`);
     } catch (e) { document.getElementById("run-err").innerHTML = `<span class="badge b-failed">${esc(e.message)}</span>`; btn.disabled = false; btn.textContent = "Run audit"; }
   });

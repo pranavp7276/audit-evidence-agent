@@ -83,15 +83,6 @@ def test_gaps_are_reported_not_hidden_by_a_dispute_view():
 
 
 @pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="no DATABASE_URL")
-def test_dashboard_shape_and_attention_order():
-    d = client.get("/api/dashboard").json()
-    assert {"runs", "totals", "letters", "severity", "by_check", "months", "agencies", "agent", "recent", "attention"} <= set(d)
-    assert int(d["totals"]["gaps"]) >= int(d["totals"]["gaps_reviewed"])
-    levels = [a["level"] for a in d["attention"]]
-    assert levels == sorted(levels, key=["critical", "warning"].index), "critical items come first"
-
-
-@pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="no DATABASE_URL")
 def test_the_letter_check_and_challenge_rules():
     run = _completed_run()
     if not run:

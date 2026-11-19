@@ -1,33 +1,8 @@
-"""The parts of the story that are arithmetic or lookup: the forecast, the citation read-back, the answer-key match, the trap catalogue."""
-import math
-
+"""The parts of the story that are lookup: the citation read-back, the answer-key match, the trap catalogue."""
 from agent.runtime.cite_check import verify_citations
-from agent.services import readiness, scoring
+from agent.services import scoring
 from agent.services.traps import TRAPS
 from agent.tools import record_keys
-
-# ---------------------------------------------------------------- forecast
-
-
-def test_wilson_interval_brackets_the_rate():
-    lo, hi = readiness._wilson(30, 100)
-    assert lo < 0.30 < hi and 0.21 < lo and hi < 0.40
-
-
-def test_wilson_interval_is_sane_at_the_edges():
-    assert readiness._wilson(0, 0) == (0.0, 0.0)
-    lo, hi = readiness._wilson(0, 200)
-    assert lo == 0.0 and 0 < hi < 0.03
-    lo, hi = readiness._wilson(200, 200)
-    assert hi == 1.0 and lo > 0.97
-
-
-def test_a_larger_check_gives_a_narrower_forecast():
-    narrow = readiness._wilson(300, 1000)
-    wide = readiness._wilson(30, 100)
-    assert (narrow[1] - narrow[0]) < (wide[1] - wide[0])
-    assert math.isclose(sum(readiness._wilson(1, 2)) / 2, 0.5, abs_tol=0.2)
-
 
 # ---------------------------------------------------------------- citations read back from the warehouse
 

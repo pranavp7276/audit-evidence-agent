@@ -11,9 +11,7 @@ export const GUIDE = [
       <tr><td><strong>Team member</strong></td><td>Maintains the data in the database, the guardrails and the knowledge base, and the code. See <a href="#/guide/data">Working with the data</a> and <a href="#/guide/team">Team setup</a>.</td></tr></tbody></table>
     <h2>The menu</h2>
     <ul>
-      <li><strong>Overview</strong>: the <em>Dashboard</em> shows how every audit stands against the acceptance criteria and what needs attention first; <em>Alerts</em> lists what needs a person (the count shows beside it).</li>
-      <li><strong>Plan and conduct</strong>: the <em>Audit plan</em> holds the audits you expect, by month; <em>Audits</em> lists each audit with its status; <em>New audit request</em> starts one.</li>
-      <li><strong>Findings and follow-up</strong>: <em>Exceptions</em> is every gap and open question across audits; select gaps there to raise an <em>Issue</em>, which tracks a gap to closure with an owner and a due date; <em>Risk</em> shows where gaps are most likely and most serious; <em>Reports</em> gathers what you can hand over.</li>
+      <li><strong>Audit work</strong>: <em>Audits</em> lists every audit with its status and review progress; <em>New audit request</em> starts one; <em>Reports</em> gathers what you can hand over for each audit.</li>
       <li><strong>Forms and rules</strong>: <em>Guardrails</em> (what is tested, how serious a failure is, review priority), <em>Compliance library</em> (the circulars and policies they come from) and <em>Rules &amp; data</em> (the limits in force and the data read).</li>
       <li><strong>Help</strong>: this guide. The <em>Data explorer</em> (bottom left) is a read-only SQL box for analysts.</li>
     </ul>
