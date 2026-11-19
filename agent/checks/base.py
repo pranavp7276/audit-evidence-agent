@@ -1,8 +1,25 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from zoneinfo import ZoneInfo
 
-from agent.contracts import CheckSpec, Finding, Status
+from agent.contracts import CheckSpec, Citation, Finding, Status
+
+RULE_TZ = ZoneInfo("Asia/Kolkata")  # zone D12 hours/limits and the cert register use (docs/decisions.md D-009)
+
+Event = tuple[str, str, list[Citation]]  # (subject_ref, reason, citations)
+
+
+def _plain(v):
+    return v if v is None or isinstance(v, (str, int, float, bool)) else (v.isoformat() if hasattr(v, "isoformat") else str(v))
+
+
+def cite(row: dict, fields: tuple[str, ...] = (), role: str = "primary") -> Citation:
+    """A Citation from a tool row; `fields` are the only columns copied into the extract (data minimisation)."""
+    return Citation(
+        source_system=row["source_system"], source_table=row["source_table"], record_key=row["record_key"],
+        record_ts_utc=row["record_ts_utc"], record_ts_original=row["record_ts_original"],
+        extract={k: _plain(row[k]) for k in fields} or None, role=role)
 
 
 class BaseCheck(ABC):
@@ -14,6 +31,11 @@ class BaseCheck(ABC):
     def __init__(self, spec: CheckSpec, severity_scale: list[str]):
         self.spec = spec
         self.severity_scale = severity_scale
+
+    @property
+    def severity(self) -> str:
+        """Severity for this check's gaps: the request's label for the question, else its most severe label."""
+        return self.spec.test.get("severity") or (self.severity_scale[0] if self.severity_scale else "Unrated")
 
     @abstractmethod
     def evaluate(self, account_id: str) -> list[Finding]:
@@ -36,3 +58,20 @@ class BaseCheck(ABC):
     def cannot_determine(self, account_id: str, reason: str, subject_ref: str | None = None) -> Finding:
         return Finding(check_id=self.spec.check_id, account_id=account_id, subject_ref=subject_ref,
                        status=Status.CANNOT_DETERMINE, reason=reason)
+
+    def assemble(self, account_id: str, gaps: list[Event], oks: list[Event],
+                 unknown: list[tuple[str, str]], nothing: str) -> list[Finding]:
+        """Per-event results to findings: one gap per breaching event; otherwise one evidenced finding
+        for the account (citing every record tested) plus a cannot_determine per undecidable event.
+        Gaps are never merged or dropped."""
+        if gaps:
+            return [Finding(check_id=self.spec.check_id, account_id=account_id, subject_ref=s, status=Status.GAP,
+                            severity=self.severity, reason=r, citations=c) for s, r, c in gaps]
+        out = [self.cannot_determine(account_id, r, s) for s, r in unknown]
+        if oks:
+            out.append(Finding(
+                check_id=self.spec.check_id, account_id=account_id, status=Status.EVIDENCED,
+                reason=f"All {len(oks)} tested event(s) passed. " + " ".join(r for _, r, _ in oks[:3])
+                       + (" ..." if len(oks) > 3 else ""),
+                citations=[c for _, _, cs in oks for c in cs]))
+        return out or [self.cannot_determine(account_id, nothing)]

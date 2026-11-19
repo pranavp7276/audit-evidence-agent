@@ -52,23 +52,29 @@ def save_findings(run_id: UUID, findings: list[Finding]) -> None:
     The database re-checks the guardrails at commit: if any evidenced/gap finding lacks a
     citation, the whole batch is rejected rather than partially saved.
     """
-    with connect() as conn, conn.transaction():
-        for f in findings:
-            fid = conn.execute(
-                """INSERT INTO audit.findings (run_id, check_id, account_id, subject_ref, status,
-                                               severity, reason, evidence_query)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING finding_id""",
-                (run_id, f.check_id, f.account_id, f.subject_ref, f.status.value,
-                 f.severity, f.reason, f.evidence_query),
-            ).fetchone()["finding_id"]
-            for c in f.citations:
-                conn.execute(
-                    """INSERT INTO audit.citations (finding_id, source_system, source_table, record_key,
-                                                    record_ts_utc, record_ts_original, extract, role)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
-                    (fid, c.source_system.value, c.source_table, c.record_key, c.record_ts_utc,
-                     c.record_ts_original, Jsonb(c.extract) if c.extract is not None else None, c.role),
-                )
+    if not findings:
+        return
+    with connect() as conn, conn.transaction(), conn.cursor() as cur:
+        cur.executemany(
+            """INSERT INTO audit.findings (run_id, check_id, account_id, subject_ref, status,
+                                           severity, reason, evidence_query)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING finding_id""",
+            [(run_id, f.check_id, f.account_id, f.subject_ref, f.status.value,
+              f.severity, f.reason, f.evidence_query) for f in findings],
+            returning=True)
+        ids = []
+        while True:
+            ids.append(cur.fetchone()["finding_id"])
+            if not cur.nextset():
+                break
+        citations = [
+            (fid, c.source_system.value, c.source_table, c.record_key, c.record_ts_utc, c.record_ts_original,
+             Jsonb(c.extract) if c.extract is not None else None, c.role)
+            for fid, f in zip(ids, findings) for c in f.citations]
+        cur.executemany(
+            """INSERT INTO audit.citations (finding_id, source_system, source_table, record_key,
+                                            record_ts_utc, record_ts_original, extract, role)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""", citations)
 
 
 def finish_run(run_id: UUID, status: str = "completed", notes: str | None = None) -> None:
