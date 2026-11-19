@@ -18,7 +18,7 @@ class AgentCertificationCheck(BaseCheck):
 
     def evaluate(self, account_id: str) -> list[Finding]:
         gaps, oks = [], []
-        for c in get_contacts(account_id, channel="call"):
+        for c in get_contacts(account_id, *self.window, channel="call"):
             day = c["contact_ts_utc"].astimezone(RULE_TZ).date()
             certs = get_certifications(c["collector_id"])
             valid = [x for x in certs if x["valid_from"] <= day <= x["valid_to"]]

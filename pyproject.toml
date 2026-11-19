@@ -37,3 +37,4 @@ select = ["E", "F", "I"]
 "agent/web/rules.py" = ["E501"]  # plain-language text for auditors
 "agent/web/app.py" = ["E501"]  # long SQL and response builders
 "agent/pack/writer.py" = ["E501"]  # letter and pack text
+"agent/parser/request_parser.py" = ["E501"]  # question wording

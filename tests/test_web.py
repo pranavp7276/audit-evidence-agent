@@ -36,7 +36,9 @@ def _completed_run():
     from agent.db import connect
 
     with connect() as conn:
-        row = conn.execute("SELECT run_id FROM audit.runs WHERE status = 'completed' ORDER BY started_at DESC LIMIT 1").fetchone()
+        row = conn.execute("""SELECT r.run_id FROM audit.runs r WHERE r.status = 'completed' AND EXISTS (
+                                  SELECT 1 FROM audit.findings f WHERE f.run_id = r.run_id AND f.status = 'gap')
+                              ORDER BY r.started_at DESC LIMIT 1""").fetchone()
     return str(row["run_id"]) if row else None
 
 

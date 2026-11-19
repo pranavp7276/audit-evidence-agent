@@ -15,11 +15,13 @@ import base64
 import io
 import json
 import os
+import re
 import secrets
 import tempfile
 import threading
 import zipfile
 from dataclasses import asdict
+from datetime import date
 from pathlib import Path
 from uuid import UUID
 
@@ -34,8 +36,8 @@ from agent.contracts import CheckSpec, CheckType
 from agent.contracts import Request as AuditRequest
 from agent.db import connect, database_url, read_rows
 from agent.pack.writer import DISPOSITIONS, build_pack, generate_letter
-from agent.parser.request_parser import _SOURCES, extract_sample_accounts, parse_checks, read_request
-from agent.pipeline import process
+from agent.parser.request_parser import _SOURCES, parse_checks, parse_sample, read_request
+from agent.pipeline import MAX_SAMPLE, contacted_accounts, process
 from agent.tools.warehouse_sql import run_sql
 from agent.web.rules import ASSUMPTIONS, CHECK_INFO, SOURCES, STATUS_MEANING
 
@@ -196,22 +198,37 @@ async def preview(request_id: str = Form("PREVIEW"), text: str = Form(""), sourc
         checks, scale = parse_checks(request)
     except Exception as exc:
         raise HTTPException(400, f"Could not interpret the request: {exc}")
-    accounts = extract_sample_accounts(request.text)
+    stated = parse_sample(request.text)
+    accounts = stated["accounts"]
     known = {r["account_id"] for r in read_rows(
         "SELECT DISTINCT account_id FROM staging.d4_contacts WHERE account_id = ANY(%s)", (accounts,))} if accounts else set()
     rows = [{"check_id": c.check_id, "question_ref": c.question_ref, "question_text": c.question_text,
              "check_type": c.check_type.value, "severity": c.test.get("severity"), "sources": [s.value for s in c.sources]}
             for c in checks]
+    period = stated["period"]
     return {"source": request.source, "text": request.text, "checks": rows, "scale": scale, "accounts": len(accounts),
             "unknown_accounts": [a for a in accounts if a not in known][:100], "unknown_count": len(accounts) - len(known),
-            "parser": "llm" if os.environ.get("ANTHROPIC_API_KEY") else "keyword"}
+            "parser": "llm" if os.environ.get("ANTHROPIC_API_KEY") else "keyword",
+            "instruction": not re.search(r"^\s*Q\d+\s*[.:)]", request.text, re.MULTILINE),
+            "period": period, "size": stated["size"], "eligible": contacted_accounts(period), "max_sample": MAX_SAMPLE}
+
+
+@app.get("/api/population")
+def population(start: str = "", end: str = "") -> dict:
+    """How many accounts had a contact in a period (India calendar days, end exclusive)."""
+    try:
+        period = {"start": start, "end": end, "label": ""} if start and end else None
+        return {"eligible": contacted_accounts(period)}
+    except ValueError:
+        raise HTTPException(400, "Dates must look like 2026-10-01.")
 
 
 @app.post("/api/runs")
 async def create_run(request_id: str = Form(...), text: str = Form(""), source: str = Form("text"), lender: str = Form(""),
                      response_due: str = Form(""), created_by: str = Form(""), accounts: str = Form(""),
                      random_n: int | None = Form(None), checks: str = Form(""), scale: str = Form(""),
-                     file: UploadFile | None = File(None)) -> dict:
+                     period_start: str = Form(""), period_end: str = Form(""), period_label: str = Form(""),
+                     sample_size: int | None = Form(None), file: UploadFile | None = File(None)) -> dict:
     request_id = request_id.strip()
     if not request_id:
         raise HTTPException(400, "Give the request an id, e.g. CO-04.")
@@ -226,12 +243,21 @@ async def create_run(request_id: str = Form(...), text: str = Form(""), source: 
             raise HTTPException(400, f"The reviewed checks are not valid: {exc}")
     labels = json.loads(scale) if scale.strip() else None
     sample = [a for a in (t.strip() for t in accounts.replace("\n", ",").split(",")) if a] or None
+    period = None
+    if period_start and period_end:
+        try:
+            if date.fromisoformat(period_start) >= date.fromisoformat(period_end):
+                raise ValueError
+        except ValueError:
+            raise HTTPException(400, "The period needs a start date before its end date (the end day is not included).")
+        period = {"start": period_start, "end": period_end, "label": period_label.strip() or f"{period_start} to {period_end}"}
     run_id = store.start_run(request, lender=lender.strip(), response_due=response_due.strip(), created_by=created_by.strip())
 
     def work() -> None:
         with _RUN_LOCK:
             try:
-                process(run_id, request, accounts=sample, random_n=random_n, log=lambda _: None, checks=specs, scale=labels)
+                process(run_id, request, accounts=sample, random_n=random_n, log=lambda _: None, checks=specs, scale=labels,
+                        period=period, size=sample_size)
             except Exception:
                 pass  # recorded on the run (status failed + notes); the page shows it
 

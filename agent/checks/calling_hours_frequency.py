@@ -25,7 +25,7 @@ class CallingHoursCheck(BaseCheck):
         start, end = policy_time("calling_hours_start"), policy_time("calling_hours_end")
         rules = [cite(get_policy()[k], _RULE_FIELDS, "supporting") for k in ("calling_hours_start", "calling_hours_end")]
         gaps, oks = [], []
-        for c in get_contacts(account_id, channel="call"):
+        for c in get_contacts(account_id, *self.window, channel="call"):
             local = c["contact_ts_utc"].astimezone(RULE_TZ)
             inside = start <= local.time().replace(tzinfo=None) < end
             evt = (c["contact_id"],
@@ -49,7 +49,7 @@ class CallingFrequencyCheck(BaseCheck):
         limit = int(policy_value("max_calls_per_day"))
         rule = cite(get_policy()["max_calls_per_day"], _RULE_FIELDS, "supporting")
         by_day = defaultdict(list)
-        for c in get_contacts(account_id, channel="call"):
+        for c in get_contacts(account_id, *self.window, channel="call"):
             by_day[c["contact_ts_utc"].astimezone(RULE_TZ).date()].append(c)
         gaps, oks = [], []
         for day, calls in sorted(by_day.items()):

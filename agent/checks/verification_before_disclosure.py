@@ -30,7 +30,7 @@ class VerificationBeforeDisclosureCheck(BaseCheck):
     def evaluate(self, account_id: str) -> list[Finding]:
         by_call = _verifications(account_id)
         gaps, oks, unknown = [], [], []
-        for c in get_contacts(account_id, channel="call"):
+        for c in get_contacts(account_id, *self.window, channel="call"):
             if not (c["outcome"] == "connected" and c["dues_disclosed"]):
                 continue
             call = cite(c, ("outcome", "dues_disclosed", "contact_ts_src"))

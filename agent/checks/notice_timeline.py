@@ -14,7 +14,8 @@ class NoticeTimelineCheck(BaseCheck):
 
     Test per notice (subject_ref = notice id): count business days (Mon-Fri, national holidays
     excluded: docs/decisions.md D-010) from trigger date to service date against the D12 limit.
-    gap if served late or never served. Cite the dispatch row and the holiday rows used."""
+    gap if served late or never served. Cite the dispatch row and the holiday rows used.
+    Notices are tested over their own history, not just the audit period (D-014)."""
 
     check_type = "notice_timeline"
 

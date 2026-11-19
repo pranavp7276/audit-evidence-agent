@@ -25,7 +25,9 @@ python -m agent serve --host 0.0.0.0                           # let coworkers o
 APP_PASSWORD=choose-one python -m agent serve --host 0.0.0.0   # require a password (any user name)
 ```
 The auditor's workflow, start to finish:
-1. **New audit request:** upload or paste the request (PDF, `.eml`, text). The platform shows how each question
+1. **New audit request:** upload or paste the request (PDF, `.eml`, text), either numbered questions or a plain
+   instruction such as *"Run a compliance audit for all accounts contacted in the previous month, sample size 300"*
+   (every guardrail is tested, the period is read, and 300 accounts are drawn from those contacted in it). The platform shows how each question
    was read; confirm or change the test, set severities from the request's scale, split bundled questions.
    Sampled accounts with no records are flagged before anything runs.
 2. **Summary:** verdict, gaps by severity, where gaps concentrate (collectors, months), and a next-steps checklist.

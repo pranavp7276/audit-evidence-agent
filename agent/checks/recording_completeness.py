@@ -16,7 +16,7 @@ class RecordingCompletenessCheck(BaseCheck):
     def evaluate(self, account_id: str) -> list[Finding]:
         recorded = {r["contact_id"]: r for r in get_recordings(account_id)}
         gaps, oks = [], []
-        for c in get_contacts(account_id, channel="call"):
+        for c in get_contacts(account_id, *self.window, channel="call"):
             if c["outcome"] != "connected":
                 continue
             call = cite(c, ("outcome", "contact_ts_src"))

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from datetime import UTC, date, datetime, time
 from zoneinfo import ZoneInfo
 
 from agent.contracts import CheckSpec, Citation, Finding, Status
@@ -36,6 +37,19 @@ class BaseCheck(ABC):
     def severity(self) -> str:
         """Severity for this check's gaps: the request's label for the question, else its most severe label."""
         return self.spec.test.get("severity") or (self.severity_scale[0] if self.severity_scale else "Unrated")
+
+    @property
+    def window(self) -> tuple[datetime | None, datetime | None]:
+        """The audit period as UTC bounds [start, end), or (None, None) when the request names no period.
+        The period is India calendar days, start inclusive and end exclusive (docs/decisions.md D-014)."""
+        p = self.spec.test.get("period")
+        if not p:
+            return None, None
+
+        def bound(iso: str) -> datetime:
+            return datetime.combine(date.fromisoformat(iso), time.min, tzinfo=RULE_TZ).astimezone(UTC)
+
+        return bound(p["start"]), bound(p["end"])
 
     @abstractmethod
     def evaluate(self, account_id: str) -> list[Finding]:

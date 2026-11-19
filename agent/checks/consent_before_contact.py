@@ -21,7 +21,7 @@ class ConsentBeforeContactCheck(BaseCheck):
     def evaluate(self, account_id: str) -> list[Finding]:
         channels = self.spec.test.get("channels", ["whatsapp", "sms"])
         gaps, oks, unknown = [], [], []
-        for m in (c for c in get_contacts(account_id) if c["channel"] in channels):
+        for m in (c for c in get_contacts(account_id, *self.window) if c["channel"] in channels):
             msg = cite(m, ("channel", "contact_ts_src"))
             records = get_consents(account_id, m["channel"])
             before = [c for c in records if c["consent_ts_utc"] < m["contact_ts_utc"]]

@@ -146,14 +146,17 @@ async function newRequestPage() {
         <div><label for="file">Request document (PDF, .eml or text)</label><input id="file" type="file" accept=".pdf,.eml,.txt,.md"></div>
       </div>
       <div style="margin-top:12px"><div class="row between"><label for="text">…or paste the request text</label>
-        ${examples.length ? `<span class="small muted">Try an example: ${examples.map((n) => `<button type="button" class="link" data-example="${esc(n)}">${esc(n)}</button>`).join(" · ")}</span>` : ""}</div>
-        <textarea id="text" placeholder="Paste the questions, the severity scale and the list of sampled accounts here.">${esc(f.text || "")}</textarea></div>
-      <details><summary>The request does not list its sampled accounts?</summary><div class="grid cols2">
-        <div><label for="accts">Account ids (comma separated)</label><input id="accts" type="text" value="${esc(f.accts || "")}" placeholder="ACC00001, ACC00002"></div>
-        <div><label for="rn">…or draw a random sample of</label><input id="rn" type="number" min="1" max="2000" value="${esc(f.rn || "")}" placeholder="300"></div></div></details>
+        <span class="small muted">Try an example: <button type="button" class="link" data-instruction>plain instruction</button>${examples.map((n) => ` · <button type="button" class="link" data-example="${esc(n)}">${esc(n)}</button>`).join("")}</span></div>
+        <textarea id="text" placeholder="Paste the numbered questions, the severity scale and the sampled accounts, or simply write the instruction, e.g. &quot;Run a compliance audit for all accounts contacted in the previous month, sample size 300&quot;.">${esc(f.text || "")}</textarea></div>
+      <details><summary>Have a specific list of accounts to test?</summary><div class="grid cols2">
+        <div><label for="accts">Account ids (comma separated)</label><input id="accts" type="text" value="${esc(f.accts || "")}" placeholder="ACC00001, ACC00002"></div></div></details>
       <div class="row" style="margin-top:14px"><button class="primary big" id="read">Read the request</button><span id="intake-err"></span></div>
     </form></div>
     <div id="confirm"></div>`;
+  app.querySelector("[data-instruction]").addEventListener("click", () => {
+    document.getElementById("text").value = "Run a compliance audit for all the accounts reached out within the previous month. Check whether all the guardrails in Rules & data are being followed. Use a sample size of 300.";
+    document.getElementById("rid").value = "AUDIT-PREV-MONTH";
+  });
   app.querySelectorAll("[data-example]").forEach((b) => b.addEventListener("click", async () => {
     const ex = await api("/api/examples/" + encodeURIComponent(b.dataset.example));
     document.getElementById("text").value = ex.text;
@@ -168,8 +171,9 @@ async function newRequestPage() {
     const file = document.getElementById("file").files[0];
     if (file) fd.append("file", file);
     draft.form = { rid: document.getElementById("rid").value, lender: document.getElementById("lender").value, due: document.getElementById("due").value,
-      text: document.getElementById("text").value, accts: document.getElementById("accts").value, rn: document.getElementById("rn").value };
+      text: document.getElementById("text").value, accts: document.getElementById("accts").value };
     try {
+      draft.sample = null;
       draft.preview = await api("/api/requests/preview", { method: "POST", body: fd });
       draft.form.text = draft.preview.text; // the extracted text (also for PDFs)
       renderConfirm();
@@ -187,10 +191,14 @@ function checkOptions(sel) {
 function renderConfirm() {
   const p = draft.preview, el = document.getElementById("confirm");
   const questions = new Set(p.checks.map((c) => c.question_ref)).size;
-  const noSample = !p.accounts && !draft.form.accts && !draft.form.rn;
+  const listed = p.accounts || (draft.form.accts || "").split(",").filter((x) => x.trim()).length;
+  const S = (draft.sample ||= { start: p.period ? p.period.start : "", end: p.period ? p.period.end : "", label: p.period ? p.period.label : "", size: p.size || "", eligible: p.eligible });
+  const canRun = () => !!(listed || S.size);
   el.innerHTML = `
     <div class="card"><h2>Confirm how the request is read</h2>
-      <p class="muted">${questions} question(s) became ${p.checks.length} check(s)${p.parser === "keyword" ? " using the keyword reader (no AI key is configured), so please check each row" : " by the AI reader; please check each row"}.
+      ${p.checks.length ? "" : `<div class="err">No checks could be made from this text. Describe what to test (for example “check consent, calling hours and verification for accounts contacted last month”) or paste numbered questions.</div>`}
+      ${p.instruction ? `<div class="note">Your request is an instruction rather than numbered questions, so the platform chose ${p.checks.length} guardrail check(s) to test${p.checks.length === 7 ? " (a full compliance audit: every guardrail listed in Rules &amp; data)" : ""}. Severities use the default scale ${p.scale.map(esc).join(" › ")} because the request gave none. Change anything below before running.</div>` : ""}
+      <p class="muted">${p.instruction ? `Guardrails to test: ${p.checks.length}.` : `${questions} question(s) became ${p.checks.length} check(s)${p.parser === "keyword" ? " using the keyword reader (no AI key is configured), so please check each row" : " by the AI reader; please check each row"}.`}
         Questions can be vague or bundle several tests: change the test, set the severity from the request's scale, or split a bundled question. A question that fits no test is reported as <em>unanswered</em>, never dropped.</p>
       <table class="wiz"><thead><tr><th>Check</th><th>Question as written</th><th>Test applied</th><th>Severity</th><th></th></tr></thead><tbody>
       ${p.checks.map((c, i) => `<tr data-i="${i}"><td><input type="text" data-f="check_id" value="${esc(c.check_id)}" style="width:70px"><div class="small muted">${esc(c.question_ref)}</div></td>
@@ -201,11 +209,19 @@ function renderConfirm() {
       </tbody></table>
       <div class="small muted" style="margin-top:8px">Severity scale found in the request: ${p.scale.length ? p.scale.map(esc).join(" › ") : "none"}. Gaps with no severity are graded at the most severe level.</div>
     </div>
-    <div class="card"><h2>Sample</h2>
-      ${p.accounts ? `<p><strong>${num(p.accounts)}</strong> accounts are listed in the request.</p>` : `<div class="note">The request lists no accounts. Provide them above (account ids or a random sample size).</div>`}
+    <div class="card"><h2>Period and sample</h2>
+      ${listed ? `<p><strong>${num(listed)}</strong> accounts are ${p.accounts ? "listed in the request" : "supplied"} and will all be tested.</p>`
+        : `<p class="muted">The request lists no accounts, so the platform draws a random sample of the accounts that had a contact in the period. The same request always draws the same sample.</p>`}
+      <div class="grid cols4" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+        <div><label for="ps">Period starts</label><input id="ps" type="date" value="${esc(S.start)}"></div>
+        <div><label for="pe">Period ends (not included)</label><input id="pe" type="date" value="${esc(S.end)}"></div>
+        ${listed ? "" : `<div><label for="sz">Sample size</label><input id="sz" type="number" min="1" max="${p.max_sample}" value="${esc(S.size)}" placeholder="300"></div>`}
+        <div style="align-self:flex-end"><button type="button" id="recount">Recount accounts</button></div></div>
+      <p id="elig" class="small muted" style="margin-bottom:0"></p>
+      ${S.label ? `<p class="small muted" style="margin:6px 0 0">Read from the request: ${esc(S.label)}. Calls and messages outside the period are not tested; notices are tested over their own history. Days are India calendar days.</p>` : `<p class="small muted" style="margin:6px 0 0">No period given: every contact on record is tested.</p>`}
       ${p.unknown_count ? `<div class="note"><strong>${num(p.unknown_count)} sampled account(s) have no records in the contact log</strong> (${p.unknown_accounts.slice(0, 8).map(esc).join(", ")}${p.unknown_count > 8 ? ", …" : ""}). They will be reported as <em>cannot determine</em>; check the account ids before running.</div>` : p.accounts ? `<p class="muted small">Every sampled account has records in the data.</p>` : ""}
     </div>
-    <div class="row"><button class="primary big" id="run" ${noSample ? "disabled" : ""}>Run audit</button><span class="muted small">A 300-account, 10-question request normally completes in a couple of minutes.</span><span id="run-err"></span></div>`;
+    <div class="row"><button class="primary big" id="run" ${canRun() && p.checks.length ? "" : "disabled"}>Run audit</button><span class="muted small">A 300-account, 10-question request normally completes in a couple of minutes.</span><span id="run-err"></span></div>`;
   const sync = () => el.querySelectorAll("tr[data-i]").forEach((tr) => {
     const c = p.checks[+tr.dataset.i];
     tr.querySelectorAll("[data-f]").forEach((inp) => (c[inp.dataset.f] = inp.value || null));
@@ -230,15 +246,35 @@ function renderConfirm() {
     if (left.length === 1 && left[0].check_id === ref + "a") left[0].check_id = ref; // no longer split
     renderConfirm();
   }));
+  const elig = document.getElementById("elig"), runBtn = document.getElementById("run");
+  const readSample = () => {
+    S.start = document.getElementById("ps").value; S.end = document.getElementById("pe").value;
+    const sz = document.getElementById("sz"); if (sz) S.size = sz.value;
+  };
+  const paintElig = () => {
+    if (listed) { elig.textContent = S.start ? `Tests apply to contacts from ${S.start} up to (not including) ${S.end}.` : ""; return; }
+    const n = S.eligible, want = +S.size;
+    elig.innerHTML = n == null ? "" : `<strong>${num(n)}</strong> account(s) had at least one contact ${S.start ? "in this period" : "on record"}${want ? `; ${want > n ? `only ${num(n)} can be sampled (you asked for ${num(want)})` : `${num(want)} will be drawn at random`}` : ""}.`;
+    runBtn.disabled = !(p.checks.length && (listed || want) && (n == null || n > 0));
+  };
+  const recount = async () => {
+    readSample();
+    try { S.eligible = (await api(`/api/population?start=${S.start}&end=${S.end}`)).eligible; } catch (e) { elig.innerHTML = `<span class="badge b-failed">${esc(e.message)}</span>`; return; }
+    paintElig();
+  };
+  document.getElementById("recount").addEventListener("click", recount);
+  ["ps", "pe", "sz"].forEach((id) => { const i = document.getElementById(id); if (i) i.addEventListener("input", () => { readSample(); paintElig(); }); });
+  paintElig();
   document.getElementById("run").addEventListener("click", async () => {
-    sync();
+    sync(); readSample();
     const ids = p.checks.map((c) => c.check_id.trim());
     if (new Set(ids).size !== ids.length || ids.some((x) => !x)) { document.getElementById("run-err").innerHTML = `<span class="badge b-failed">Each check needs its own id</span>`; return; }
     const who = needName(); if (!who) return;
     const fd = new FormData(), f = draft.form;
     fd.append("request_id", f.rid); fd.append("lender", f.lender || ""); fd.append("response_due", f.due || ""); fd.append("created_by", who);
     fd.append("text", p.text); fd.append("source", p.source); fd.append("accounts", f.accts || "");
-    if (f.rn) fd.append("random_n", f.rn);
+    if (S.start && S.end) { fd.append("period_start", S.start); fd.append("period_end", S.end); fd.append("period_label", S.label && S.start === (p.period || {}).start && S.end === (p.period || {}).end ? S.label : ""); }
+    if (!listed && S.size) fd.append("sample_size", S.size);
     fd.append("checks", JSON.stringify(p.checks.map((c) => ({ ...c, check_id: c.check_id.trim() })))); fd.append("scale", JSON.stringify(p.scale));
     const btn = document.getElementById("run"); btn.disabled = true; btn.textContent = "Starting…";
     try {
