@@ -4,7 +4,7 @@ The platform is an agent with a fixed, bounded loop. Language models read text; 
 
 ```mermaid
 flowchart TD
-    A[Auditor pastes or uploads a request] --> B[Intake: parse questions, period, sample, severity scale]
+    A[Auditor pastes or uploads a request] --> B[Intake: parse questions, period, sample, severity scale; triage each question]
     B --> C{Auditor confirms the reading}
     C -->|edit| B
     C -->|confirm| D[Planner: per check, which tools, which guardrail version, what is assumed]
@@ -15,13 +15,16 @@ flowchart TD
     F -->|check crashed| F1[Retry the account, up to 2 times]
     F -->|recording or transcript missing| F2[Look under the mirrored session in the other dialer, re-run the same check]
     F -->|still unresolved| F3[Leave as cannot determine, queue for follow-up]
-    F1 --> G
-    F2 --> G
-    F3 --> G
+    F1 --> S
+    F2 --> S
+    F3 --> S
+    S[Skeptic: a second model reads each sampled gap against only the records it cites; it never changes a finding] --> G
     G[Reporter: save findings + citations, save the agent trace, finish run]
     G --> H[Auditor reviews findings, records follow-ups, management comments]
     H --> I[Draft response letter, versioned]
-    I --> J[Evidence pack: gap report, follow-up, reviews, letter, agent_trace.csv, index]
+    I --> L{Claims check: every statement referenced, every number matches}
+    L -->|fails| I
+    L -->|passes| J[Evidence pack: gap report, follow-up, reviews, letter, agent_trace.csv, index]
     G -.-> K[Ask the audit: bounded question answering over the run's findings]
 ```
 
@@ -29,11 +32,12 @@ flowchart TD
 
 | Role | Module | Does | Never does |
 |---|---|---|---|
-| Parser | `agent/intake` | Reads the request into checks, period, sample size; flags low confidence | Runs a check |
+| Parser and triage | `agent/intake` | Reads the request into checks, period, sample size; flags low confidence; sorts each question into testable, agency document, or not testable | Runs a check |
 | Planner | `runtime/planner.py` | Writes the plan to the trace: tools per check (declared by each check's `tools`), guardrail version, assumptions, unmatched references | Retrieves data |
 | Retriever | `agent/tools/*` via `core/toolkit.py` | Reads staging views through the read-only role; each call is timed, counted and attributed to a check | Decides a result |
 | Evaluator | `agent/checks/*` | Applies the rule; one finding per breaching event; cites every record | Uses a model |
 | Investigator | `runtime/investigator.py` | Retries failed accounts; looks for a recording or transcript under the mirrored session; re-runs the same check | Turns a gap into a pass by judgement; hides a gap |
+| Skeptic | `runtime/skeptic.py`, `services/challenge.py` | Reads a sample of gaps (default 40, spread over every check) against only the records each cites; answers supports, disputes or unclear; phone numbers are masked and names dropped before anything leaves | Change a finding, a status or a severity; a disagreement only moves a gap up the review queue |
 | Orchestrator | `runtime/orchestrator.py` | Order of work, trace, saving | Decides results |
 | Reporter | `agent/services` (`store.py`, `pack.py`) | Saves findings, builds the letter and pack | Edits findings after completion |
 | Ask the audit | `runtime/qa.py` | Answers questions from the run's findings; rejects an answer that cites a finding no query returned | Writes or re-tests |

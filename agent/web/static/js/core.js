@@ -56,7 +56,8 @@ export const info = (type) => (state.rules && state.rules.checks[type]) || { tit
 
 function inline(s) {
   return esc(s).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/(^|[\s(])_([^_]+)_(?=[\s).,;]|$)/g, "$1<em>$2</em>").replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1");
+    .replace(/(^|[\s(])_([^_]+)_(?=[\s).,;]|$)/g, "$1<em>$2</em>").replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
+    .replace(/\[(F\d+|R|Q[A-Za-z0-9]*)\]/g, '<span class="ref" title="What this statement rests on: F = a finding, Q = a check, R = the whole audit">$1</span>');
 }
 export function markdown(md) {
   const out = []; let list = false, table = [];

@@ -24,6 +24,9 @@ The code is a stack of six layers. **A layer may import only from layers below i
 | how a request is read, or who is sampled | `intake/` | keeps reading and sampling apart from testing |
 | what is tested and how serious a failure is | `knowledge/guardrails.py` | versioned; the audit records the version applied |
 | the order of work, retries, searching elsewhere | `runtime/` | the agent; returns results, does not save them |
+| a second reading of gaps | `runtime/skeptic.py` (the reading), `services/challenge.py` (keeping it) | it only adds rows to `finding_challenges` |
+| what kind of question something is | `intake/triage.py` | agency documents and untestable items are never evidenced |
+| whether the letter's statements hold | `services/letter_lint.py` | the generator in `services/pack.py` writes the references it checks |
 | saving anything to `audit.*`, the letter, the pack | `services/` | the only layer that writes |
 | an API route | `web/routers/<area>.py` | one router per area |
 | a screen | `web/static/js/pages/<page>.js` | one script per page |
@@ -37,7 +40,7 @@ The code is a stack of six layers. **A layer may import only from layers below i
 3. `apply_scope`: each check receives its sample, the period, and the guardrail version with its default severity and weight.
 4. `store.save_checks`.
 5. `runtime.run_agent`: plan, evaluate each check through its tools, investigate. Returns findings; writes nothing.
-6. `store.save_findings`, the report step in the trace, `store.finish_run`, and the trace is saved even when the run fails.
+6. `store.save_findings`, then `challenge.challenge_run` (the second reading; it cannot fail the run), the report step in the trace, `store.finish_run`; the trace is saved even when the run fails.
 
 The agent's roles and limits are in `docs/workflow.md`.
 
@@ -45,7 +48,7 @@ The agent's roles and limits are in `docs/workflow.md`.
 
 The sidebar has three groups, matching what a person is doing:
 
-- **Audit work**: Audit requests, New audit request.
+- **Audit work**: Dashboard (every audit at a glance and what needs attention first), Audit requests, New audit request.
 - **Rulebook**, read in order: 1. Knowledge base, 2. Guardrails, 3. Rules & data. Together they say what an audit is tested against. There is one copy of the rules, shared by every audit.
 - **Help**: Guide; the Data explorer (advanced) sits at the bottom.
 

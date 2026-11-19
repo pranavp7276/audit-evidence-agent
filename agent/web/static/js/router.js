@@ -12,13 +12,13 @@ export async function route() {
   state.seq++;
   stopPolling();
   const { parts, q } = parseHash();
-  const section = { new: "new", rules: "rules", kb: "kb", guardrails: "guardrails", guide: "guide" }[parts[0]] || "runs";
+  const section = { "": "dash", new: "new", rules: "rules", kb: "kb", guardrails: "guardrails", guide: "guide", audits: "runs", run: "runs" }[parts[0] ?? ""] || "runs";
   document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === section));
   try {
     await (pages[parts[0]] || pages[""])({ parts, q });
   } catch (e) {
     if (e.stale) return;
-    app.innerHTML = `<div class="err">${esc(e.message)}</div><p><a href="#/">Back to audit requests</a></p>`;
+    app.innerHTML = `<div class="err">${esc(e.message)}</div><p><a href="#/">Back to the dashboard</a></p>`;
   }
   window.scrollTo(0, 0);
 }

@@ -57,7 +57,7 @@ async def preview(request_id: str = Form("PREVIEW"), text: str = Form(""), sourc
     ambiguous = [{"ref": r["ref"], "note": r["note"]} for r in refs if r["status"] == "ambiguous"]
     rows = [{"check_id": c.check_id, "question_ref": c.question_ref, "question_text": c.question_text,
              "check_type": c.check_type.value, "severity": c.test.get("severity"), "sources": [s.value for s in c.sources],
-             "reader": c.test.get("reader"), "confidence": c.test.get("confidence")}
+             "reader": c.test.get("reader"), "confidence": c.test.get("confidence"), "triage": c.test.get("triage")}
             for c in checks]
     period = stated["period"]
     return {"source": request.source, "text": request.text, "checks": rows, "scale": scale, "accounts": len(accounts),

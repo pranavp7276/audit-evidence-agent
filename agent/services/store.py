@@ -18,14 +18,14 @@ def _git_sha() -> str | None:
 
 
 def start_run(request: Request, lender: str | None = None, response_due: str | None = None,
-              created_by: str | None = None) -> UUID:
+              created_by: str | None = None, kind: str = "audit") -> UUID:
     with connect() as conn:
         row = conn.execute(
             """INSERT INTO audit.runs (request_id, request_source, request_path, severity_scale, agent_version,
-                                       lender, response_due, created_by)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING run_id""",
+                                       lender, response_due, created_by, kind)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING run_id""",
             (request.request_id, request.source, request.path,
-             Jsonb(request.severity_scale), _git_sha(), lender or None, response_due or None, created_by or None),
+             Jsonb(request.severity_scale), _git_sha(), lender or None, response_due or None, created_by or None, kind),
         ).fetchone()
         return row["run_id"]
 
@@ -106,3 +106,11 @@ def finish_run(run_id: UUID, status: str = "completed", notes: str | None = None
 
 
 __all__ = ["start_run", "set_severity_scale", "save_sample_references", "save_checks", "save_findings", "finish_run"]
+
+
+def save_citation_check(run_id: UUID, checked: int, verified: int, missing: list[dict]) -> None:
+    """Record how many cited records were found again in the warehouse."""
+    with connect() as conn:
+        conn.execute("INSERT INTO audit.citation_checks (run_id, checked, verified, missing) VALUES (%s, %s, %s, %s) "
+                     "ON CONFLICT (run_id) DO UPDATE SET checked = EXCLUDED.checked, verified = EXCLUDED.verified, missing = EXCLUDED.missing, created_at = now()",
+                     (run_id, checked, verified, Jsonb(missing)))

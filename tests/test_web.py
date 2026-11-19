@@ -80,3 +80,29 @@ def test_gaps_are_reported_not_hidden_by_a_dispute_view():
     detail = client.get(f"/api/runs/{run}").json()
     gaps = client.get(f"/api/runs/{run}/findings", params={"status": "gap", "limit": 1}).json()["total"]
     assert gaps == detail["totals"]["gap"]  # the register always shows every gap, whatever its review status
+
+
+@pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="no DATABASE_URL")
+def test_dashboard_shape_and_attention_order():
+    d = client.get("/api/dashboard").json()
+    assert {"runs", "totals", "letters", "severity", "by_check", "months", "agencies", "agent", "recent", "attention"} <= set(d)
+    assert int(d["totals"]["gaps"]) >= int(d["totals"]["gaps_reviewed"])
+    levels = [a["level"] for a in d["attention"]]
+    assert levels == sorted(levels, key=["critical", "warning"].index), "critical items come first"
+
+
+@pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="no DATABASE_URL")
+def test_the_letter_check_and_challenge_rules():
+    run = _completed_run()
+    if not run:
+        pytest.skip("no completed run to test against")
+    letter = client.get(f"/api/runs/{run}/letter").json()["body"]
+    ok = client.post(f"/api/runs/{run}/letter/check", json={"body": letter}).json()
+    assert ok["ok"] and ok["problems"] == [], "the letter the platform writes must pass its own claims check"
+    bad = client.post(f"/api/runs/{run}/letter/check", json={"body": letter.replace("## 4.", "All accounts were compliant.\n\n## 4.", 1)}).json()
+    assert not bad["ok"]
+    # a letter that fails the check cannot be approved, even with every comment filled in
+    r = client.post(f"/api/runs/{run}/letter", json={"body": "## 2. Summary\n\nWe found 3 gaps in 12 accounts.", "status": "approved", "author": "Test"})
+    assert r.status_code == 400
+    # a second reading needs a name and a gap
+    assert client.post(f"/api/runs/{run}/findings/1/challenge", json={"requested_by": ""}).status_code == 400

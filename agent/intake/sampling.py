@@ -5,7 +5,7 @@ from collections import defaultdict
 from datetime import UTC, date, datetime, time
 
 from agent.core.clock import RULE_TZ
-from agent.core.db import read_rows
+from agent.tools.warehouse_sql import run_sql
 
 MAX_SAMPLE = 2000
 
@@ -17,31 +17,31 @@ def period_bounds(period: dict) -> tuple[datetime, datetime]:
     return bound(period["start"]), bound(period["end"])
 
 
-def _reached_out(period: dict | None) -> tuple[str, list]:
+def _reached_out(period: dict | None) -> tuple[str, dict]:
     """SQL for the accounts reached out to: an outbound call attempt (counted once) or a message sent in the period."""
     if not period:
         return ("SELECT account_id FROM staging.call_sessions WHERE direction = 'OUTBOUND' AND NOT is_mirror_duplicate "
-                "UNION SELECT account_id FROM staging.messages WHERE status IN ('SENT', 'DELIVERED', 'READ')", [])
+                "UNION SELECT account_id FROM staging.messages WHERE status IN ('SENT', 'DELIVERED', 'READ')", {})
     start, end = period_bounds(period)
     return ("SELECT account_id FROM staging.call_sessions WHERE direction = 'OUTBOUND' AND NOT is_mirror_duplicate "
-            "AND started_ts_utc >= %s AND started_ts_utc < %s "
-            "UNION SELECT account_id FROM staging.messages WHERE status IN ('SENT', 'DELIVERED', 'READ') AND sent_ts_utc >= %s AND sent_ts_utc < %s",
-            [start, end, start, end])
+            "AND started_ts_utc >= %(start)s AND started_ts_utc < %(end)s "
+            "UNION SELECT account_id FROM staging.messages WHERE status IN ('SENT', 'DELIVERED', 'READ') AND sent_ts_utc >= %(start)s AND sent_ts_utc < %(end)s",
+            {"start": start, "end": end})
 
 
 def contacted_accounts(period: dict | None) -> int:
     """How many accounts were reached out to in the period (all accounts when there is no period)."""
     sql, params = _reached_out(period)
-    return read_rows(f"SELECT count(*) AS n FROM ({sql}) t", tuple(params))[0]["n"]
+    return run_sql(f"SELECT count(*) AS n FROM ({sql}) t", params)["rows"][0]["n"]
 
 
 def sample_accounts(period: dict | None, size: int | None, seed: str) -> list[str]:
     """A random sample of the accounts reached out to in the period. Ordered by a hash of the account id and the
     request reference, so re-running the same request draws the same sample."""
     sql, params = _reached_out(period)
-    rows = read_rows(f"SELECT account_id FROM ({sql}) t ORDER BY md5(account_id || %s), account_id LIMIT %s",
-                     (*params, seed, min(size or MAX_SAMPLE, MAX_SAMPLE)))
-    return [r["account_id"] for r in rows]
+    limit = min(size or MAX_SAMPLE, MAX_SAMPLE)
+    out = run_sql(f"SELECT account_id FROM ({sql}) t ORDER BY md5(account_id || %(seed)s), account_id LIMIT %(lim)s", {**params, "seed": seed, "lim": limit}, max_rows=limit)
+    return [r["account_id"] for r in out["rows"]]
 
 
 def resolve_references(refs: list[str]) -> list[dict]:
@@ -50,8 +50,8 @@ def resolve_references(refs: list[str]) -> list[dict]:
     'ambiguous'. Nothing is dropped: every reference comes back with its status."""
     if not refs:
         return []
-    rows = read_rows("SELECT account_id, account_number, institution_code FROM staging.accounts "
-                     "WHERE upper(account_number) = ANY(%s) OR account_id = ANY(%s)", ([r.upper() for r in refs], list(refs)))
+    rows = run_sql("SELECT account_id, account_number, institution_code FROM staging.accounts "
+                   "WHERE upper(account_number) = ANY(%(numbers)s) OR account_id = ANY(%(ids)s)", {"numbers": [r.upper() for r in refs], "ids": list(refs)}, max_rows=20000)["rows"]
     index: dict[str, dict[str, dict]] = defaultdict(dict)
     for r in rows:
         index[r["account_number"].upper()][r["account_id"]] = r

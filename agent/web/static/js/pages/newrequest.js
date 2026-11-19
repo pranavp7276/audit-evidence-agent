@@ -55,6 +55,9 @@ export async function newRequestPage() {
   if (draft.preview) renderConfirm();
 }
 
+const TRIAGE_CLASS = { vendor_document: "b-in_review", not_testable: "b-cannot_determine" };
+const triageNote = (t) => (t && t.kind !== "account_check" ? `<div class="triage" data-triage><span class="badge ${TRIAGE_CLASS[t.kind] || ""}">${esc(t.label)}</span><div class="small muted">${esc(t.reason)}</div></div>` : "");
+
 function checkOptions(sel) {
   return Object.entries(state.config.check_types || {}).map(([k, t]) => `<option value="${k}" ${k === sel ? "selected" : ""}>${esc(t)}</option>`).join("");
 }
@@ -74,7 +77,7 @@ function renderConfirm() {
       <table class="wiz"><thead><tr><th>Check</th><th>Question as written</th><th>Test applied</th><th>Severity</th><th></th></tr></thead><tbody>
       ${p.checks.map((c, i) => `<tr data-i="${i}"><td><input type="text" data-f="check_id" value="${esc(c.check_id)}" style="width:70px"><div class="small muted">${esc(c.question_ref)}</div></td>
         <td>${esc(c.question_text)}${c.reader ? `<div class="small ${c.confidence != null && c.confidence < 0.7 ? "" : "muted"}" style="${c.confidence != null && c.confidence < 0.7 ? "color:var(--unk);font-weight:700" : ""}">Read by ${esc(c.reader)}${c.confidence != null && c.confidence < 0.7 ? " · low confidence, please check" : ""}</div>` : ""}</td>
-        <td><select data-f="check_type">${checkOptions(c.check_type)}</select><div class="exp" data-exp>${esc(info(c.check_type).tests)}</div></td>
+        <td><select data-f="check_type">${checkOptions(c.check_type)}</select><div class="exp" data-exp>${esc(info(c.check_type).tests)}</div>${c.check_type === "other" ? triageNote(c.triage) : ""}</td>
         <td><select data-f="severity"><option value="">(none given)</option>${p.scale.map((s) => `<option ${s === c.severity ? "selected" : ""}>${esc(s)}</option>`).join("")}</select></td>
         <td><button type="button" class="link" data-split="${i}" title="Add another check for the same question">Split</button>${p.checks.filter((x) => x.question_ref === c.question_ref).length > 1 ? ` · <button type="button" class="link" data-del="${i}">Remove</button>` : ""}</td></tr>`).join("")}
       </tbody></table>
@@ -101,7 +104,10 @@ function renderConfirm() {
   });
   el.querySelectorAll("tr[data-i] [data-f]").forEach((inp) => inp.addEventListener("change", () => {
     sync();
-    if (inp.dataset.f === "check_type") inp.closest("tr").querySelector("[data-exp]").textContent = info(inp.value).tests;
+    if (inp.dataset.f === "check_type") {
+      const tr = inp.closest("tr"); tr.querySelector("[data-exp]").textContent = info(inp.value).tests;
+      const t = tr.querySelector("[data-triage]"); if (t) t.hidden = inp.value !== "other";  // a real test replaces the triage note
+    }
   }));
   el.querySelectorAll("[data-split]").forEach((b) => b.addEventListener("click", () => {
     sync();

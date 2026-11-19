@@ -1,4 +1,5 @@
 import { api, esc, num, fdate, badge, navigate, refresh } from "../core.js";
+import { evidenceMap, wireEvidenceMap } from "./evidence_map.js";
 import { findingItem, wireFindings } from "./findings.js";
 
 const SOURCE_TABLE = { call: "cn_core.tele_process_instance_call_logs", whatsapp: "cn_core.communication_dashboard_t", sms: "cn_core.communication_dashboard_t",
@@ -44,9 +45,11 @@ export async function accountFile(el, d, runId, scale, account) {
   el.innerHTML = `<p class="small no-print"><a href="#/run/${runId}/accounts">&larr; All accounts</a></p>
     <h2>Loan account <span class="mono">${esc(a.account_number || account)}</span> <span class="small muted">· CN id ${esc(account)}${a.institution_code ? ` · ${esc(a.institution_code)}` : ""}</span></h2>
     <div class="card"><h3 style="margin-top:0">Result by check</h3><div class="row">${d.checks.map((c) => { const r = byCheck[c.check_id]; return `<div class="stat" style="min-width:150px"><div class="small muted">${esc(c.check_id)} · ${esc(c.title)}</div><div style="margin-top:4px">${r ? badge(r.status) : `<span class="muted small">no result</span>`}</div></div>`; }).join("")}</div></div>
+    ${evidenceMap(a.events, a.findings)}
     <div class="grid cols2" style="grid-template-columns:1.1fr 1fr;align-items:start">
       <div class="card"><h3 style="margin-top:0">Timeline (all times in UTC; source time shown beside it)</h3>${a.events.length ? `<div class="tl">${tl}</div>` : `<div class="empty">No records for this account in any source.</div>`}
         <p class="small muted">Highlighted events are cited by a finding: red for a gap, amber for cannot determine.</p></div>
       <div><h3 style="margin-top:0">Findings</h3><div id="list">${a.findings.map((f) => findingItem(f, scale, reviewable, false)).join("") || `<div class="empty">No findings for this account.</div>`}</div></div></div>`;
   wireFindings(el, runId, refresh);
+  wireEvidenceMap(el);
 }

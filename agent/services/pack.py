@@ -105,7 +105,7 @@ def generate_letter(run_id: UUID) -> str:
            "All times are compared in UTC. Every statement below is traced to the recorded findings and the source records they cite; "
            "gaps are reported as found.", "",
            "## 2. Summary of results", "",
-           f"We found **{len(gaps)} gap(s) affecting {n_acc_gap} of {sample} sampled accounts**.", ""]
+           f"We found **{len(gaps)} gap(s) affecting {n_acc_gap} of {sample} sampled accounts**. [R]", ""]
     sev = Counter(f["severity"] for f in gaps)
     if sev:
         out += ["| Severity | Gap findings |", "|---|---|"]
@@ -126,8 +126,14 @@ def generate_letter(run_id: UUID) -> str:
         for c in cs:
             info, fs = CHECK_INFO[c["check_type"]], by_check[c["check_id"]]
             if c["check_type"] == "other":
-                out += ["This question could not be mapped to a test and has **not** been answered by the platform. "
-                        "It needs a manual response.", ""]
+                triage = (c["test_definition"] or {}).get("triage") or {}
+                if triage.get("kind") == "vendor_document":
+                    out += [f"This asks the agency for a document that none of our systems hold. It is **not** evidenced from our data and no claim is made; "
+                            f"the agency is asked to provide it (section 3a). [{c['check_id']}]", ""]
+                elif triage.get("kind") == "not_testable":
+                    out += [f"No system of record shows this, so we **cannot determine** it and make no claim either way. {triage.get('reason', '')} [{c['check_id']}]", ""]
+                else:
+                    out += [f"This question could not be mapped to a test and has **not** been answered by the platform. It needs a manual response. [{c['check_id']}]", ""]
                 continue
             g = [f for f in fs if f["status"] == "gap"]
             ga = {f["account_id"] for f in g}
@@ -135,21 +141,26 @@ def generate_letter(run_id: UUID) -> str:
             ua = {f["account_id"] for f in fs} - ga - ea
             out += [f"**What we tested:** {info['tests']}", "",
                     f"**Result:** of {d['sample_n'].get(c['check_id'], 0)} sampled accounts, {len(ea)} were evidenced as compliant, "
-                    f"{len(ga)} have at least one gap ({len(g)} gap finding(s)) and {len(ua)} could not be determined.", ""]
+                    f"{len(ga)} have at least one gap ({len(g)} gap finding(s)) and {len(ua)} could not be determined. [{c['check_id']}]", ""]
             if g:
                 bysev = Counter(f["severity"] for f in g)
-                out += ["**Gaps, stated as found:** " + ", ".join(f"{k}: {v}" for k, v in bysev.items()) + ".", ""]
-                out += [f"- {f['account_id']} ({f['subject_ref'] or 'account'}): {f['reason']}" for f in sorted(g, key=_rank(scale, _weights(d["checks"])))[:5]]
+                out += ["**Gaps, stated as found:** " + ", ".join(f"{k}: {v}" for k, v in bysev.items()) + f". [{c['check_id']}]", ""]
+                out += [f"- {f['account_id']} ({f['subject_ref'] or 'account'}): {f['reason']} [F{f['finding_id']}]" for f in sorted(g, key=_rank(scale, _weights(d["checks"])))[:5]]
                 if len(g) > 5:
-                    out.append(f"- ... and {len(g) - 5} more; see the gap report (annex).")
+                    out.append(f"- ... and {len(g) - 5} more; see the gap report (annex). [{c['check_id']}]")
                 disp = Counter(f["disposition"] or "open" for f in g)
                 out += ["", "**Review status of these gaps:** " + ", ".join(f"{DISPOSITIONS[k].lower()}: {v}" for k, v in disp.items())
-                        + ". A disputed gap remains reported until the evidence changes.", ""]
+                        + f". A disputed gap remains reported until the evidence changes. [{c['check_id']}]", ""]
             if ua:
                 out += [f"{len(ua)} account(s) could not be determined from the available evidence; these are being followed up "
-                        "and no compliance is claimed for them.", ""]
+                        f"and no compliance is claimed for them. [{c['check_id']}]", ""]
         resp = d["responses"].get(ref)
         out += [f"**Management comment:** {resp['body']}" if resp else "**Management comment:** [To be completed by management]", ""]
+    vendor = [c for c in d["checks"] if c["check_type"] == "other" and ((c["test_definition"] or {}).get("triage") or {}).get("kind") == "vendor_document"]
+    if vendor:
+        out += ["## 3a. Documents to be provided by the agency", "",
+                "These questions ask for agency documents that our systems do not hold. Nothing is claimed about them until they are supplied.", ""]
+        out += [f"- {c['question_ref']}. {c['question_text']} [{c['check_id']}]" for c in vendor] + [""]
     out += ["## 4. Limitations and assumptions", ""] + [f"- **{k}.** {v}" for k, v in ASSUMPTIONS] + [
         "", "## Annexes", "", "- Annex A: gap report (gap_report.csv)", "- Annex B: evidence extracts per check (extracts/)",
         "- Annex C: items for follow-up (follow_up.csv)", "- Annex D: review trail (reviews.csv)", ""]

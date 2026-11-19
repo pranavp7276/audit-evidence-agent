@@ -3,17 +3,22 @@ import { STATUS_LABEL, api, post, esc, num, help, badge, sevBadge, info, needNam
 /* ---------- findings (shared by questions, gap register, follow-up, account file) ---------- */
 const DISP_LABEL = { open: "Open", confirmed: "Confirmed", disputed: "Disputed", remediation_planned: "Remediation planned", evidence_obtained: "Evidence obtained" };
 const DISP_FOR = { gap: ["open", "confirmed", "disputed", "remediation_planned"], cannot_determine: ["open", "evidence_obtained"] };
+const SECOND = { supports: ["b-evidenced", "Second reading agrees"], disputes: ["b-failed", "Second reading disagrees"], unclear: ["b-cannot_determine", "Second reading unsure"] };
+const secondBadge = (f) => (f.status === "gap" && SECOND[f.challenge_verdict] ? `<span class="badge ${SECOND[f.challenge_verdict][0]}" title="${esc(f.challenge_concern || "")}">${SECOND[f.challenge_verdict][1]}</span>` : "");
 const dispBadge = (d) => `<span class="badge b-${esc(d)}">${esc(DISP_LABEL[d] || d)}</span>`;
 
 export function findingItem(f, scale, reviewable, selectable) {
   const opts = DISP_FOR[f.status];
   return `<div class="finding" data-id="${f.finding_id}"><div class="head">
     ${selectable ? `<input type="checkbox" class="sel" data-id="${f.finding_id}" title="Select for a bulk decision" style="width:auto;margin-top:5px">` : ""}
-    ${badge(f.status)} ${sevBadge(f.severity, scale)} ${f.status !== "evidenced" ? dispBadge(f.disposition) : ""}
+    ${badge(f.status)} ${sevBadge(f.severity, scale)} ${f.status !== "evidenced" ? dispBadge(f.disposition) : ""} ${secondBadge(f)}
     <div class="reason"><div>${esc(f.reason)}</div><div class="small muted"><a class="mono" href="#/run/${f.run_id}/account/${encodeURIComponent(f.account_id)}" title="CN account id ${esc(f.account_id)}">${esc(f.account_number || f.account_id)}</a> · ${esc(f.check_id)} ${esc(info(f.check_type).title)}${f.subject_ref ? ` · ${esc(f.subject_ref)}` : ""}</div></div>
     ${f.priority_weight > 1 ? `<span class="tag" title="Review priority weight">priority ${f.priority_weight}</span>` : ""}<span class="tag">${f.citations.length} record${f.citations.length === 1 ? "" : "s"}</span></div>
     <div class="body" hidden>
       <div class="small"><strong>Test applied:</strong> ${esc(info(f.check_type).tests)}</div>
+      ${f.status === "gap" ? `<div class="second no-print"><div class="small">${f.challenge_verdict ? `<strong>Second reading:</strong> ${esc(SECOND[f.challenge_verdict][1].replace("Second reading ", ""))}.${f.challenge_concern ? ` ${esc(f.challenge_concern)}` : ""}` : `<span class="muted">No second reading yet.</span>`}
+        <span class="muted">A second model read only the records cited below. It never changes the gap.</span></div>
+        ${reviewable ? `<button class="link small" data-challenge="${f.finding_id}">${f.challenge_verdict ? "Ask again" : "Ask for a second reading"}</button>` : ""}</div>` : ""}
       ${f.citations.length ? f.citations.map(citeHtml).join("") : `<p class="muted small">No citation: this finding makes no claim either way.</p>`}
       ${reviewable && opts ? `<div class="review no-print"><div class="small muted" style="margin-bottom:6px">${f.reviewer ? `Last decision: ${dispBadge(f.disposition)} by ${esc(f.reviewer)}${f.review_comment ? ` — “${esc(f.review_comment)}”` : ""}` : "Not reviewed yet."} A disputed gap is still reported.</div>
         <div class="row"><select data-disp style="width:auto">${opts.map((o) => `<option value="${o}" ${o === f.disposition ? "selected" : ""}>${DISP_LABEL[o]}</option>`).join("")}</select>
@@ -33,6 +38,14 @@ export function wireFindings(root, runId, onSaved) {
     const head = ev.target.closest(".finding > .head");
     const rec = ev.target.closest("[data-rec]");
     const save = ev.target.closest("[data-savereview]");
+    const ask = ev.target.closest("[data-challenge]");
+    if (ask) {
+      const who = needName(); if (!who) return;
+      ask.textContent = "Reading…"; ask.disabled = true;
+      try { await post(`/api/runs/${runId}/findings/${ask.dataset.challenge}/challenge`, { requested_by: who }); onSaved(); }
+      catch (e) { ask.textContent = "Try again"; ask.disabled = false; alert(e.message); }
+      return;
+    }
     if (rec) { ev.stopPropagation(); showRecord(rec.dataset.table, rec.dataset.rec); return; }
     if (save) {
       const item = save.closest(".finding"), who = needName(); if (!who) return;
@@ -49,10 +62,10 @@ export function wireFindings(root, runId, onSaved) {
 
 export async function findingsPage(el, d, runId, scale, o) {
   const q = o.q || {}, page = +(q.page || 0), size = 30, fixed = o.fixed || {};
-  const f = { question: fixed.question || q.question || "", severity: q.severity || "", disposition: q.disposition || "", account: q.account || "", status: fixed.status || q.status || "" };
+  const f = { question: fixed.question || q.question || "", severity: q.severity || "", disposition: q.disposition || "", account: q.account || "", status: fixed.status || q.status || "", challenge: q.challenge || "", text: q.text || "" };
   const params = new URLSearchParams({ limit: size, offset: page * size });
   if (f.question) params.set("question", f.question);
-  ["status", "severity", "disposition", "account"].forEach((k) => f[k] && params.set(k, f[k]));
+  ["status", "severity", "disposition", "account", "challenge", "text"].forEach((k) => f[k] && params.set(k, f[k]));
   const data = await api(`/api/runs/${runId}/findings?${params}`);
   data.rows.forEach((r) => (r.run_id = runId));
   const reviewable = d.run.status === "completed", selectable = reviewable && o.mode !== "question";
@@ -69,6 +82,8 @@ export async function findingsPage(el, d, runId, scale, o) {
       ${o.mode !== "question" ? `<div><label>Question</label><select name="question"><option value="">All</option>${questions.map((x) => `<option ${x === f.question ? "selected" : ""}>${esc(x)}</option>`).join("")}</select></div>` : `<div><label>Status</label><select name="status"><option value="">Any</option>${["gap", "evidenced", "cannot_determine"].map((s) => `<option value="${s}" ${s === f.status ? "selected" : ""}>${STATUS_LABEL[s]}</option>`).join("")}</select></div>`}
       ${o.mode !== "followup" ? `<div><label>Severity</label><select name="severity"><option value="">Any</option>${scale.map((s) => `<option ${s === f.severity ? "selected" : ""}>${esc(s)}</option>`).join("")}</select></div>` : ""}
       <div><label>Review status</label><select name="disposition"><option value="">Any</option>${Object.entries(DISP_LABEL).map(([k, v]) => `<option value="${k}" ${k === f.disposition ? "selected" : ""}>${v}</option>`).join("")}</select></div>
+      ${o.mode === "gaps" ? `<div><label>Second reading</label><select name="challenge"><option value="">Any</option><option value="flagged" ${f.challenge === "flagged" ? "selected" : ""}>Disagrees or unsure</option></select></div>` : ""}
+      ${f.text ? `<input type="hidden" name="text" value="${esc(f.text)}"><div class="small" style="align-self:flex-end;padding-bottom:8px">Findings containing <strong>“${esc(f.text)}”</strong> <a href="${o.base}">clear</a></div>` : ""}
       <div style="flex:1;min-width:150px"><label>Loan account contains</label><input type="search" name="account" value="${esc(f.account)}" placeholder="CNF123456789"></div>
       <div style="align-self:flex-end" class="row"><button class="primary">Filter</button>
         ${o.mode === "gaps" && reviewable ? `<a class="btn" href="/api/runs/${runId}/files/gap_report.csv">Download CSV</a>` : o.mode === "followup" && reviewable ? `<a class="btn" href="/api/runs/${runId}/files/follow_up.csv">Download CSV</a>` : ""}</div></form></div>
@@ -103,7 +118,7 @@ export async function findingsPage(el, d, runId, scale, o) {
 }
 
 /* ---------- source record viewer ---------- */
-async function showRecord(table, key) {
+export async function showRecord(table, key) {
   const m = document.getElementById("modal");
   m.hidden = false; m.innerHTML = `<div class="box"><p class="muted">Loading…</p></div>`;
   m.onclick = (e) => { if (e.target === m) m.hidden = true; };

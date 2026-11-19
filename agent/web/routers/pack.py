@@ -3,7 +3,6 @@
 import io
 import tempfile
 import zipfile
-from dataclasses import asdict
 from pathlib import Path
 from uuid import UUID
 
@@ -11,6 +10,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from agent.services.pack import build_pack
+from agent.services.scoring import score_and_save
 from agent.web.common import _PACK_FILES, GAP_KEYS, _completed
 
 router = APIRouter()
@@ -48,8 +48,6 @@ def pack_zip(run_id: UUID) -> Response:
 @router.post("/api/runs/{run_id}/score")
 async def score_run(run_id: UUID, key_name: str = Form(""), account_col: str = Form("account_id"),
                     check_col: str = Form("question_ref"), file: UploadFile | None = File(None)) -> JSONResponse:
-    from eval.score import load_gap_key, load_reported, score
-
     _completed(run_id)
     if file is not None and file.filename:
         path = Path(tempfile.mkdtemp(prefix="gapkey-")) / "key.csv"
@@ -61,11 +59,8 @@ async def score_run(run_id: UUID, key_name: str = Form(""), account_col: str = F
     else:
         raise HTTPException(400, "Choose a gap key or upload one.")
     try:
-        truth = load_gap_key(path, account_col, check_col, None, "gap")
+        return JSONResponse(score_and_save(run_id, path, account_col, check_col))
     except SystemExit as exc:
         raise HTTPException(400, str(exc))
-    reported, unsupported = load_reported(str(run_id), "question_ref")
-    s = score(truth, reported, unsupported)
-    return JSONResponse({**asdict(s), "passes": s.passes})
 
 

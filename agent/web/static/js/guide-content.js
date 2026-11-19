@@ -11,7 +11,7 @@ export const GUIDE = [
       <tr><td><strong>Team member</strong></td><td>Maintains the data in the database, the guardrails and the knowledge base, and the code. See <a href="#/guide/data">Working with the data</a> and <a href="#/guide/team">Team setup</a>.</td></tr></tbody></table>
     <h2>The menu</h2>
     <ul>
-      <li><strong>Audit work</strong>: <em>Audit requests</em> lists every audit with its status and review progress; <em>New audit request</em> starts one.</li>
+      <li><strong>Audit work</strong>: the <em>Dashboard</em> shows how every audit stands and what needs attention first; <em>Audit requests</em> lists every audit with its status and review progress; <em>New audit request</em> starts one.</li>
       <li><strong>Rulebook</strong>, read in order: <em>1. Knowledge base</em> (the circulars and policies), <em>2. Guardrails</em> (what is tested, how serious a failure is, review priority), <em>3. Rules &amp; data</em> (the limits in force, what each check tests, the assumptions, the data read).</li>
       <li><strong>Help</strong>: this guide. <strong>Data explorer</strong> (bottom left) is a read-only SQL box for analysts.</li>
     </ul>
@@ -129,6 +129,9 @@ within the previous month. Sample size 300.</pre> Every guardrail is tested unle
     <h2>Limits that keep it honest</h2>
     <ul><li>A gap is never hidden or softened by the investigator; it can only turn up evidence that was in another system.</li>
       <li>Missing evidence is never counted as a pass.</li><li>The search is bounded: two retries per failed account and one lookup per call.</li>
+      <li>A <strong>second reading</strong>: a second model reads each sampled gap against only the records it cites and says whether they support it. It never changes a gap; a disagreement moves it to the top of your review queue.</li>
+      <li>The <strong>letter claims check</strong>: every statement of fact in the response letter carries a reference ([F123] a finding, [Q3] a check) and its numbers must match the findings, or the letter cannot be approved.</li>
+      <li><strong>Questions are sorted first</strong>: a question for an agency document (a contract, a licence, insurance) is listed for the agency to supply, and a question no system can show is reported as cannot determine. Neither is ever marked evidenced.</li>
       <li><strong>Ask the audit</strong> answers from this audit's findings only and cannot cite a finding it did not retrieve.</li></ul>
     <p>The same steps, with a diagram, are in <code>docs/workflow.md</code>.</p>` },
   { id: "guardrails", title: "Guardrails and weights", html: `

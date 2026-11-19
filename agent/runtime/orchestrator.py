@@ -30,6 +30,7 @@ def run_agent(trace: Trace, checks: list[CheckSpec], scale: list[str], sample: l
     results: dict[str, list[Finding]] = {}
     try:
         build_plan(checks, len(sample), period, origin, unresolved_refs, trace)
+        trace.flush_tool_stats(None)  # the warehouse queries that drew the sample, made before the plan was written
         runnable = []
         for spec in checks:
             cls = REGISTRY.get(spec.check_type)
@@ -37,6 +38,7 @@ def run_agent(trace: Trace, checks: list[CheckSpec], scale: list[str], sample: l
                 log(f"  {spec.check_id}: no test for check type '{spec.check_type.value}'; reported as not tested")
                 continue
             runnable.append(spec)
+            trace.step("evaluate", "evaluator", f"{spec.check_id}: retrieving the evidence and testing {len(sample):,} account(s)...", check_id=spec.check_id, status="info")
             t0 = time.perf_counter()
             check_token = current_check.set(spec.check_id)
             try:

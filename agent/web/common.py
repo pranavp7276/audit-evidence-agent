@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException
 from psycopg.rows import dict_row
 
 from agent.core.db import database_url
+from agent.tools.record_keys import KEY_EXPR
 
 ROOT = Path(__file__).resolve().parents[2]
 STATIC = Path(__file__).parent / "static"
@@ -17,19 +18,17 @@ _RUN_LOCK = threading.Lock()  # one run at a time: runs share the tool caches an
 
 app = FastAPI(title="Audit evidence platform")
 
-# citation source_table -> the column that is its record_key
-_KEYS = {"cn_core.tele_process_instance_call_logs": "dialer_code || ':' || call_session_id",   # all status rows of the session
-         "cn_core.communication_dashboard_t": "id::text", "cn_core.digital_template": "template_id::text",
-         "compliance.customer_consent": "consent_id::text", "compliance.call_recording": "recording_id::text",
-         "compliance.call_transcript_segment": "segment_id::text", "compliance.calling_policy_rule": "rule_id::text",
-         "compliance.holiday_calendar": "holiday_id::text", "compliance.notice": "notice_id::text",
-         "compliance.collector_certification": "cert_id::text", "uamdb.users": "user_id::text"}
+_KEYS = KEY_EXPR  # citation source_table -> the SQL expression that equals its record_key
 _PACK_FILES = {"gap_report.csv": "text/csv", "follow_up.csv": "text/csv", "reviews.csv": "text/csv", "agent_trace.csv": "text/csv",
                "rules_and_assumptions.md": "text/markdown", "response_letter.md": "text/markdown", "index.md": "text/markdown"}
 
 # latest review of a finding, as columns r.disposition / r.comment / r.reviewer / r.created_at
 _LATEST_REVIEW = """LEFT JOIN LATERAL (SELECT disposition, comment AS review_comment, reviewer, created_at AS reviewed_at
                    FROM audit.finding_reviews x WHERE x.finding_id = f.finding_id ORDER BY x.review_id DESC LIMIT 1) r ON true"""
+
+# latest second reading of a finding, as columns ch.verdict / ch.concern / ch.challenged_at
+_LATEST_CHALLENGE = """LEFT JOIN LATERAL (SELECT verdict AS challenge_verdict, concern AS challenge_concern, created_at AS challenged_at
+                      FROM audit.finding_challenges y WHERE y.finding_id = f.finding_id ORDER BY y.challenge_id DESC LIMIT 1) ch ON true"""
 
 
 _conn: psycopg.Connection | None = None

@@ -47,7 +47,9 @@ class VerificationBeforeDisclosureCheck(BaseCheck):
             call = cite(c, _CALL)
             mirror = rec.get("via_mirror") or (segs[0].get("via_mirror") if segs else None)
             note = f" (evidence held by the mirrored session {mirror})" if mirror else ""
-            support = [cite(rec, _REC, "supporting"), cite(first_seg, _SEG, "supporting"), *(cite(s, _SEG, "supporting") for s in checks)]
+            # cite every turn up to the first disclosure (so an absent identity check is shown by what the call did say) and every identity check after it
+            shown = {s["record_key"]: s for s in [*(s for s in segs if float(s["start_offset_sec"]) <= first), first_seg, *checks]}
+            support = [cite(rec, _REC, "supporting"), *(cite(s, _SEG, "supporting") for s in sorted(shown.values(), key=lambda s: float(s["start_offset_sec"])))]
             if any(s["tag"] == "UNCLEAR" for s in segs) and not passed:
                 unknown.append((k, f"Call {k}: the identity step is unclear in the transcript, so verification cannot be confirmed."))
             elif any(float(s["start_offset_sec"]) < first for s in passed):

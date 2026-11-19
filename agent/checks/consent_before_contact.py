@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from agent.checks.base import BaseCheck, cite, mask
 from agent.core.contracts import Finding
-from agent.tools import get_consents, get_messages
+from agent.tools import get_consents, get_messages, get_template
 from agent.tools.contact_log import SENT_STATUSES
 
 _MSG = ("channel", "contact_no", "category", "template_id", "sent_ts_src", "sent_ts_src_tz")
+_TPL = ("template_id", "sms_category", "digital_channel")
 _CONSENT = ("channel", "contact_no", "purpose", "status", "effective_ts_src")
 
 
@@ -21,7 +22,7 @@ class ConsentBeforeContactCheck(BaseCheck):
     Messages that failed to send are not tested. The two sources are in different zones: compare *_utc only."""
 
     check_type = "consent_before_contact"
-    tools = ('message_log', 'consent_registry')  # what the planner schedules and the trace attributes
+    tools = ('message_log', 'template_registry', 'consent_registry')  # what the planner schedules and the trace attributes
 
     def evaluate(self, account_id: str) -> list[Finding]:
         channels = self.spec.test.get("channels", ["WHATSAPP", "SMS"])
@@ -29,7 +30,9 @@ class ConsentBeforeContactCheck(BaseCheck):
         for m in get_messages(account_id, *self.window):
             if m["channel"] not in channels or m["status"] not in SENT_STATUSES:
                 continue
-            need = m["category"] or "COLLECTIONS"
+            tpl = get_template(m["template_id"]) if m["template_id"] is not None else None  # the registry says what the template is for
+            need = (tpl["sms_category"] if tpl else None) or m["category"] or "COLLECTIONS"
+            tpl_cite = [cite(tpl, _TPL, "supporting")] if tpl else []
             history = get_consents(m["contact_no"], m["channel"])
             before = [c for c in history if c["effective_ts_utc"] < m["sent_ts_utc"]]
             tie = [c for c in history if c["effective_ts_utc"] == m["sent_ts_utc"]]
@@ -47,7 +50,7 @@ class ConsentBeforeContactCheck(BaseCheck):
             who = f"{m['channel'].title()} message {m['message_id']} to {mask(m['contact_no'])}"
             if covering:
                 oks.append((m["message_id"], f"{who} ({need.lower()}) had consent {covering['consent_id']} first.",
-                            [msg, cite(covering, _CONSENT, "supporting")]))
+                            [msg, *tpl_cite, cite(covering, _CONSENT, "supporting")]))
             elif tie:
                 unknown.append((m["message_id"], f"{who}: a consent event is timestamped exactly when the message was sent; whether that counts as "
                                                  "'before' is not settled (docs/decisions.md D-011)."))
@@ -59,5 +62,5 @@ class ConsentBeforeContactCheck(BaseCheck):
                 else:
                     later = [c for c in history if c["effective_ts_utc"] > m["sent_ts_utc"]]
                     why, support = (("consent was only recorded after it", later[:1]) if later else ("no consent on file for this number and channel", []))
-                gaps.append((m["message_id"], f"{who} was sent without valid consent: {why}.", [msg, *(cite(c, _CONSENT, "supporting") for c in support)]))
+                gaps.append((m["message_id"], f"{who} was sent without valid consent: {why}.", [msg, *tpl_cite, *(cite(c, _CONSENT, "supporting") for c in support)]))
         return self.assemble(account_id, gaps, oks, unknown, "No WhatsApp or SMS messages sent in the period to test.")

@@ -9,14 +9,20 @@ import time
 from collections import defaultdict
 from uuid import UUID
 
+import psycopg
 from psycopg.types.json import Jsonb
 
-from agent.core.db import connect
+from agent.core.db import connect, database_url
 
 
 class Trace:
-    def __init__(self, run_id: UUID | None = None):
+    """live=True writes each step to the database as it happens, so a person can watch the agent work; otherwise steps are written by save()."""
+
+    def __init__(self, run_id: UUID | None = None, live: bool = False):
         self.run_id = run_id
+        self.live = live and run_id is not None
+        self._conn: psycopg.Connection | None = None
+        self._written = 0
         self.steps: list[dict] = []
         self._stats: dict[tuple[str | None, str], dict] = defaultdict(lambda: {"calls": 0, "rows": 0, "errors": 0, "ms": 0.0, "error_kinds": set()})
         self._t0 = time.perf_counter()
@@ -26,7 +32,23 @@ class Trace:
         row = {"seq": len(self.steps) + 1, "phase": phase, "agent": agent, "action": action, "tool": tool, "check_id": check_id, "account_id": account_id,
                "status": status, "detail": detail or {}, "duration_ms": None if ms is None else int(ms)}
         self.steps.append(row)
+        if self.live:
+            self._write_pending()
         return row
+
+    def _write_pending(self) -> None:
+        """Write the steps not yet saved on one kept-open connection. A failure here must not stop the audit: save() writes whatever is left."""
+        try:
+            if self._conn is None or self._conn.closed:
+                self._conn = psycopg.connect(database_url(), autocommit=True)
+            for s in self.steps[self._written:]:
+                self._conn.execute(
+                    """INSERT INTO audit.agent_steps (run_id, seq, phase, agent, action, tool, check_id, account_id, status, detail, duration_ms)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""",
+                    (self.run_id, s["seq"], s["phase"], s["agent"], s["action"], s["tool"], s["check_id"], s["account_id"], s["status"], Jsonb(s["detail"]), s["duration_ms"]))
+                self._written += 1
+        except Exception:
+            self._conn = None
 
     def tool_call(self, check_id: str | None, tool: str, rows: int, ms: float, error: str | None = None) -> None:
         s = self._stats[(check_id, tool)]
@@ -54,9 +76,17 @@ class Trace:
     def save(self) -> None:
         if not self.run_id or not self.steps:
             return
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+        pending = self.steps[self._written:]
+        if not pending:
+            return
         with connect() as conn, conn.transaction(), conn.cursor() as cur:
             cur.executemany(
                 """INSERT INTO audit.agent_steps (run_id, seq, phase, agent, action, tool, check_id, account_id, status, detail, duration_ms)
                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""",
                 [(self.run_id, s["seq"], s["phase"], s["agent"], s["action"], s["tool"], s["check_id"], s["account_id"], s["status"],
-                  Jsonb(s["detail"]), s["duration_ms"]) for s in self.steps])
+                  Jsonb(s["detail"]), s["duration_ms"]) for s in pending])

@@ -7,13 +7,19 @@ from __future__ import annotations
 from collections.abc import Callable
 from uuid import UUID
 
+from agent.core.context import current_trace
 from agent.core.contracts import CheckSpec, Request
 from agent.core.trace import Trace
 from agent.intake.request_parser import parse_checks, parse_sample
 from agent.intake.sampling import resolve_references, sample_accounts
+from agent.intake.triage import triage_checks
 from agent.knowledge.guardrails import published_for
+from agent.runtime.cite_check import verify_citations
 from agent.runtime.orchestrator import run_agent
 from agent.services import store
+from agent.services.challenge import challenge_run
+from agent.services.scoring import find_key, score_and_save
+from agent.services.traps import store as store_traps
 from agent.tools import clear_caches
 
 
@@ -57,7 +63,8 @@ def process(run_id: UUID, request: Request, accounts: list[str] | None = None, r
             scale: list[str] | None = None, period: dict | None = None, size: int | None = None) -> None:
     """Run every check for an already-started run. Marks the run completed or failed and re-raises so a caller can show the error.
     The period (from the request unless given) limits which calls and messages every check tests."""
-    trace = Trace(run_id)
+    trace = Trace(run_id, live=True)  # steps are saved as they happen, so the audit page can show the agent working
+    token = current_trace.set(trace)  # so the warehouse queries that draw the sample are recorded too
     try:
         clear_caches()
         if checks is None:  # no reviewed interpretation supplied: let the parser read the request
@@ -65,6 +72,7 @@ def process(run_id: UUID, request: Request, accounts: list[str] | None = None, r
         if not checks:  # never "complete" a run that tested nothing
             raise ValueError("No checks could be made from this request. Say what to test (for example 'run a compliance "
                              "audit of all guardrails for accounts contacted last month') or number the questions Q1, Q2, ...")
+        triage_checks(checks)
         scale = scale or []
         request.severity_scale = scale
         store.set_severity_scale(run_id, scale)
@@ -76,16 +84,34 @@ def process(run_id: UUID, request: Request, accounts: list[str] | None = None, r
         results = run_agent(trace, checks, scale, sample, origin, period, unmatched, log)
         for findings in results.values():
             store.save_findings(run_id, findings)
+        cites = verify_citations(trace, results)
+        store.save_citation_check(run_id, cites["checked"], cites["verified"], cites["missing"])
+        try:
+            challenge_run(run_id, trace)
+        except Exception as exc:  # a second opinion is an extra: it must never fail the audit
+            trace.step("challenge", "skeptic", f"The second reading stopped: {type(exc).__name__}: {exc}", status="failed")
         total = {s: sum(f.status.value == s for fs in results.values() for f in fs) for s in ("evidenced", "gap", "cannot_determine")}
         trace.step("report", "reporter", f"Saved {sum(total.values()):,} finding(s): {total['evidenced']} evidenced, {total['gap']} gap(s), "
                    f"{total['cannot_determine']} cannot determine. Every evidenced result and gap has its citations; the run took {trace.elapsed_ms() / 1000:.1f}s.",
                    detail=total)
         store.finish_run(run_id, "completed")
+        try:
+            store_traps(run_id)
+        except Exception as exc:  # the trap counts are a summary of the findings; the audit stands without them
+            trace.step("report", "reporter", f"Could not count the evidence traps: {exc}", status="info")
+        if key := find_key(request.request_id):  # an answer key exists for this request: score it now, so the acceptance criteria are on the audit
+            try:
+                s = score_and_save(run_id, key)
+                trace.step("report", "reporter", f"Scored against {key.name}: gap recall {s['recall']:.1%}, false gaps {s['false_gap_rate']:.1%}, {s['unsupported_claims']} claim(s) without a citation.",
+                           status="ok" if s["passes"] else "failed", detail={k: s[k] for k in ("recall", "false_gap_rate", "unsupported_claims", "matched", "true_gaps")})
+            except Exception as exc:  # scoring is a check on the audit, not part of it
+                trace.step("report", "reporter", f"Could not score against {key.name}: {exc}", status="info")
     except Exception as exc:
         trace.step("report", "reporter", f"The run stopped: {type(exc).__name__}: {exc}", status="failed")
         store.finish_run(run_id, "failed", notes=f"{type(exc).__name__}: {exc}")
         raise
     finally:
+        current_trace.reset(token)
         try:
             trace.save()
         except Exception as exc:  # the trace explains a run; losing it must not hide the run's own outcome

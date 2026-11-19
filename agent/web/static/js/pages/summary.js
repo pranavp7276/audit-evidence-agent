@@ -1,10 +1,12 @@
 import { esc, num, pct, stat, sevBadge, stackBar, navigate } from "../core.js";
+import { acceptanceCard, trapsCard } from "./acceptance.js";
 
-export function summary(el, d, runId, scale) {
+export function summary(el, d, runId, scale, traps = []) {
   const { checks, totals, severity, coverage, collectors, months, review, letter } = d;
   const gaps = +totals.gap, sampled = coverage.sampled;
   const crit = severity[0];
   const rv = (status, disp) => review.filter((r) => r.status === status && (disp === undefined || r.disposition === disp)).reduce((a, r) => a + +r.n, 0);
+  const flagged = (d.challenges.disputes || 0) + (d.challenges.unclear || 0);
   const gapsTotal = rv("gap"), gapsOpen = rv("gap", "open"), cndTotal = rv("cannot_determine"), cndOpen = rv("cannot_determine", "open");
   const verdictCls = !gaps ? "good" : crit && scale.length && crit.severity === scale[0] ? "bad" : "warn";
   const maxM = Math.max(1, ...months.map((m) => +m.gaps));
@@ -15,9 +17,11 @@ export function summary(el, d, runId, scale) {
     ${coverage.unresolved.length ? `<div class="note"><strong>Sample coverage:</strong> ${coverage.unresolved.length} of ${num(coverage.references)} account reference(s) in the request could not be tested: ${coverage.unresolved.filter((x) => x.status === "unmatched").length} matched no loan account, ${coverage.unresolved.filter((x) => x.status === "ambiguous").length} matched more than one (${coverage.unresolved.slice(0, 4).map((x) => esc(x.ref)).join(", ")}${coverage.unresolved.length > 4 ? ", …" : ""}). They are listed in the Accounts tab and need Compliance to resolve them.</div>` : ""}
     ${coverage.no_data.length ? `<div class="note"><strong>No activity:</strong> ${coverage.no_data.length} sampled account(s) have no calls or messages on record (${coverage.no_data.slice(0, 6).map(esc).join(", ")}${coverage.no_data.length > 6 ? ", …" : ""}).</div>` : ""}
     <div class="grid cols4">${stat(d.questions, "questions in the request")}${stat(totals.evidenced, "evidenced results", "ok")}${stat(gaps, "gap findings", "gap")}${stat(totals.cannot_determine, "cannot determine", "unk")}</div>
+    <div class="grid cols2" style="margin-top:14px;align-items:start">${acceptanceCard(d.acceptance, runId)}${trapsCard(traps, "Subtle traps in this audit's evidence")}</div>
     <div class="grid cols2" style="margin-top:14px">
       <div class="card"><h2>Your next steps</h2><ul class="todo">
         ${step(!coverage.unresolved.length && !coverage.no_data.length, false, "Check the sample", coverage.unresolved.length ? `${coverage.unresolved.length} account references are unmatched or ambiguous` : coverage.no_data.length ? `${coverage.no_data.length} sampled accounts have no activity` : `All ${num(sampled)} sampled accounts matched and have activity`, "")}
+        ${flagged ? step(false, false, "Read the gaps the second reading flagged", `${flagged} gap(s) the second model disputes or could not confirm: review these first`, `#/run/${runId}/gaps?challenge=flagged`) : ""}
         ${step(gapsTotal > 0 && gapsOpen === 0 || !gapsTotal, gapsTotal > gapsOpen, "Review the gaps", gapsTotal ? `${num(gapsTotal - gapsOpen)} of ${num(gapsTotal)} reviewed` : "No gaps to review", gapsTotal ? `#/run/${runId}/gaps` : "")}
         ${step(!cndTotal || cndOpen === 0, cndTotal > cndOpen, "Follow up what could not be determined", cndTotal ? `${num(cndTotal - cndOpen)} of ${num(cndTotal)} followed up` : "Nothing to follow up", cndTotal ? `#/run/${runId}/followup` : "")}
         ${step(d.responses >= d.questions && d.questions > 0, d.responses > 0, "Add management comments", `${d.responses} of ${d.questions} questions have a comment`, `#/run/${runId}/questions`)}

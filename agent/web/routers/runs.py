@@ -7,7 +7,9 @@ from fastapi import APIRouter, HTTPException, Request
 from agent.checks.catalog import CHECK_INFO
 from agent.core.db import connect
 from agent.services.pack import DISPOSITIONS
-from agent.web.common import _LATEST_REVIEW, _all, _completed, _one, _run_or_404
+from agent.services.scoring import acceptance
+from agent.services.traps import trap_counts
+from agent.web.common import _LATEST_CHALLENGE, _LATEST_REVIEW, _all, _completed, _one, _run_or_404
 
 router = APIRouter()
 
@@ -27,7 +29,7 @@ def list_runs() -> list[dict]:
         LEFT JOIN audit.findings f USING (run_id)
         LEFT JOIN LATERAL (SELECT disposition FROM audit.finding_reviews x WHERE x.finding_id = f.finding_id
                            ORDER BY x.review_id DESC LIMIT 1) r2 ON true
-        GROUP BY r.run_id ORDER BY r.started_at DESC LIMIT 100""")
+        WHERE r.kind = 'audit' GROUP BY r.run_id ORDER BY r.started_at DESC LIMIT 100""")
 
 
 _COUNTS = """count(f.*) FILTER (WHERE f.status = 'evidenced') AS evidenced,
@@ -87,7 +89,9 @@ def run_detail(run_id: UUID) -> dict:
                       GROUP BY 1, 2""", (run_id,))
     letter = _one("SELECT version, status, author, created_at FROM audit.letters WHERE run_id = %s ORDER BY version DESC LIMIT 1", (run_id,))
     responses = _one("SELECT count(DISTINCT question_ref) AS n FROM audit.question_responses WHERE run_id = %s", (run_id,))["n"]
-    return {"run": run, "checks": checks, "severity": severity, "totals": totals,
+    challenges = {r["verdict"]: r["n"] for r in _all("""SELECT y.verdict, count(*) AS n FROM (SELECT DISTINCT ON (finding_id) finding_id, verdict FROM audit.finding_challenges
+                      WHERE run_id = %s ORDER BY finding_id, challenge_id DESC) y GROUP BY y.verdict""", (run_id,))}
+    return {"run": run, "checks": checks, "severity": severity, "totals": totals, "challenges": challenges, "acceptance": acceptance(run_id),
             "tested_checks": sum(1 for c in checks if c["accounts_tested"] > 0),
             "coverage": {"sampled": sample, "no_data": [r["account_id"] for r in no_data], "references": total_refs,
                          "unresolved": [{"ref": r["original_ref"], "status": r["match_status"], "candidates": r["candidates"], "note": r["note"]} for r in refs]},
@@ -97,7 +101,7 @@ def run_detail(run_id: UUID) -> dict:
 
 @router.get("/api/runs/{run_id}/findings")
 def findings(run_id: UUID, check_id: str | None = None, question: str | None = None, status: str | None = None,
-             account: str | None = None, severity: str | None = None, disposition: str | None = None,
+             account: str | None = None, severity: str | None = None, disposition: str | None = None, challenge: str | None = None, text: str | None = None,
              limit: int = 50, offset: int = 0) -> dict:
     run = _run_or_404(run_id)
     where, params = ["f.run_id = %s"], [run_id]
@@ -108,21 +112,26 @@ def findings(run_id: UUID, check_id: str | None = None, question: str | None = N
     if disposition:
         where.append("COALESCE(r.disposition, 'open') = %s")
         params.append(disposition)
+    if text:
+        where.append("f.reason ILIKE %s")
+        params.append(f"%{text.strip()}%")
+    if challenge == "flagged":
+        where.append("ch.challenge_verdict IN ('disputes', 'unclear')")
     if account:
         where.append("(f.account_id ILIKE %s OR a.account_number ILIKE %s)")
         params += [f"%{account.strip()}%"] * 2
     clause = " AND ".join(where)
     base = (f"FROM audit.findings f JOIN audit.checks c USING (run_id, check_id) LEFT JOIN staging.accounts a ON a.account_id = f.account_id "
-            f"{_LATEST_REVIEW} WHERE {clause}")
+            f"{_LATEST_REVIEW} {_LATEST_CHALLENGE} WHERE {clause}")
     total = _one(f"SELECT count(*) AS n {base}", tuple(params))["n"]
     rows = _all(f"""
         SELECT f.finding_id, f.check_id, c.question_ref, c.check_type, f.account_id, a.account_number, f.subject_ref, f.status, f.severity,
-               f.reason, f.evidence_query, COALESCE(r.disposition, 'open') AS disposition, r.review_comment, r.reviewer, r.reviewed_at,
+               f.reason, f.evidence_query, ch.challenge_verdict, ch.challenge_concern, COALESCE(r.disposition, 'open') AS disposition, r.review_comment, r.reviewer, r.reviewed_at,
                COALESCE((c.test_definition->>'priority_weight')::int, 1) AS priority_weight,
                COALESCE((SELECT jsonb_agg(to_jsonb(ci) - 'finding_id' ORDER BY ci.citation_id)
                          FROM audit.citations ci WHERE ci.finding_id = f.finding_id), '[]') AS citations
         {base}
-        ORDER BY (f.status <> 'gap'), COALESCE(array_position(%s::text[], f.severity), 99),
+        ORDER BY (f.status <> 'gap'), (COALESCE(ch.challenge_verdict, 'supports') = 'supports'), COALESCE(array_position(%s::text[], f.severity), 99),
                  -COALESCE((c.test_definition->>'priority_weight')::int, 1), f.check_id, f.account_id,
                  f.subject_ref NULLS FIRST
         LIMIT %s OFFSET %s""", (*params, list(run["severity_scale"]), max(1, min(limit, 500)), max(0, offset)))
@@ -178,3 +187,10 @@ async def put_response(run_id: UUID, question_ref: str, request: Request) -> dic
     return {"saved": True}
 
 
+
+
+@router.get("/api/runs/{run_id}/traps")
+def run_traps(run_id: UUID) -> list[dict]:
+    """The subtle evidence traps this audit caught, counted from its findings."""
+    _run_or_404(run_id)
+    return trap_counts(run_id)

@@ -1,6 +1,7 @@
 import { app, state, api, reviewer, setReviewer, renderWho } from "./core.js";
 import { registerPage, route } from "./router.js";
 import { homePage } from "./pages/home.js";
+import { dashboardPage } from "./pages/dashboard.js";
 import { newRequestPage } from "./pages/newrequest.js";
 import { workspace } from "./pages/workspace.js";
 import { rulesPage } from "./pages/rules.js";
@@ -9,7 +10,8 @@ import { guardrailsPage } from "./pages/guardrails.js";
 import { guidePage } from "./pages/guide.js";
 import { sqlPage } from "./pages/explorer.js";
 
-registerPage("", homePage);
+registerPage("", dashboardPage);
+registerPage("audits", homePage);
 registerPage("new", newRequestPage);
 registerPage("rules", () => rulesPage(app, true));
 registerPage("guide", ({ parts }) => guidePage(parts[1] || "start"));

@@ -7,11 +7,12 @@ from fastapi import APIRouter, HTTPException, Request
 
 from agent.core.toolkit import REGISTRY as TOOLS
 from agent.runtime import qa
+from agent.services.challenge import challenge_finding
 from agent.web.common import _all, _completed, _run_or_404
 
 router = APIRouter()
 
-PHASES = [("plan", "Plan"), ("retrieve", "Retrieve"), ("evaluate", "Evaluate"), ("investigate", "Investigate"), ("report", "Report")]
+PHASES = [("plan", "Plan"), ("retrieve", "Retrieve"), ("evaluate", "Evaluate"), ("investigate", "Investigate"), ("challenge", "Second reading"), ("report", "Report")]
 
 
 @router.get("/api/agent/tools")
@@ -40,5 +41,19 @@ async def ask_the_audit(run_id: UUID, request: Request) -> dict:
     body = await request.json()
     try:
         return qa.ask(run_id, str(body.get("question", "")))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.post("/api/runs/{run_id}/findings/{finding_id}/challenge")
+async def challenge(run_id: UUID, finding_id: int, request: Request) -> dict:
+    """Ask a second model to read one gap against the records it cites. It changes nothing; the answer is shown beside the gap."""
+    _completed(run_id)
+    body = await request.json()
+    who = str(body.get("requested_by", "")).strip()
+    if not who:
+        raise HTTPException(400, "Enter your name first.")
+    try:
+        return challenge_finding(run_id, finding_id, who)
     except ValueError as exc:
         raise HTTPException(400, str(exc))

@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Request
 
 from agent.core.db import connect
+from agent.services.letter_lint import lint
 from agent.services.pack import generate_letter
 from agent.web.common import _all, _completed, _one
 
@@ -51,6 +52,11 @@ async def save_letter(run_id: UUID, request: Request) -> dict:
         raise HTTPException(400, "The letter is empty.")
     if status == "approved" and "[To be completed" in text:
         raise HTTPException(400, "The letter still has placeholders ('[To be completed by management]'). Complete them before approving.")
+    if status == "approved":
+        problems = lint(run_id, text)
+        if problems:
+            raise HTTPException(400, f"The letter makes {len(problems)} statement(s) its findings do not support, for example line {problems[0]['line']}: "
+                                     f"{problems[0]['problem']} Fix them on the Response letter tab before approving.")
     with connect() as conn, conn.transaction():
         v = conn.execute("SELECT COALESCE(max(version), 0) + 1 AS v FROM audit.letters WHERE run_id = %s", (run_id,)).fetchone()["v"]
         conn.execute("INSERT INTO audit.letters (run_id, version, body, status, author, note) VALUES (%s, %s, %s, %s, %s, %s)",
@@ -58,3 +64,12 @@ async def save_letter(run_id: UUID, request: Request) -> dict:
     return {"version": v, "status": status}
 
 
+
+
+@router.post("/api/runs/{run_id}/letter/check")
+async def check_letter(run_id: UUID, request: Request) -> dict:
+    """Check the letter as written: every statement of fact must point at a finding or check, and its numbers must match the findings."""
+    _completed(run_id)
+    body = await request.json()
+    problems = lint(run_id, str(body.get("body", "")))
+    return {"ok": not problems, "problems": problems}

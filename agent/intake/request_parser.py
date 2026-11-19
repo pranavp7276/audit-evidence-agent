@@ -18,6 +18,7 @@ from pathlib import Path
 
 from agent.core import llm
 from agent.core.contracts import CheckSpec, CheckType, Request, SourceSystem
+from agent.intake.triage import triage_checks
 
 _QUESTION = re.compile(r"^\s*(Q\d+)\s*[.:)]\s*(.+?)\s*$", re.MULTILINE)
 _SEVERITY_LINE = re.compile(r"^\s*([A-Za-z][\w ]*?)\s+[-:]\s+.*$")
@@ -263,11 +264,11 @@ def parse_checks_with_info(request: Request) -> tuple[list[CheckSpec], list[str]
         try:
             checks, scale = (_parse_questions_with_models(request) if _QUESTION.search(request.text) else _parse_instruction_with_models(request))
             if checks:
-                return checks, scale, {"reader": "models", "models": llm.models(), "note": None}
+                return triage_checks(checks), scale, {"reader": "models", "models": llm.models(), "note": None}
         except (llm.LLMError, ValueError, KeyError, TypeError) as exc:
             info["note"] = f"The model service could not read this request ({exc}). The keyword reader was used instead; please check every row."
     checks, scale = _parse_fallback(request)
-    return checks, scale, info
+    return triage_checks(checks), scale, info
 
 
 def parse_checks(request: Request) -> tuple[list[CheckSpec], list[str]]:
