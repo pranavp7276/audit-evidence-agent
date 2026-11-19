@@ -162,7 +162,7 @@ def assist(body: _Ask) -> dict:
 
 @app.get("/api/rules")
 def rules() -> dict:
-    policy = read_rows("SELECT rule_key, rule_value, unit, counting_unit, counting_rule, effective_from, effective_to, note "
+    policy = read_rows("SELECT rule_key, rule_value, unit, counting_unit, counting_rule, effective_from, effective_to, note, institution_code "
                        "FROM staging.policy_rules ORDER BY rule_key, effective_from")
     return {"checks": CHECK_INFO, "status_meaning": STATUS_MEANING, "dispositions": DISPOSITIONS,
             "assumptions": [{"topic": k, "text": v} for k, v in ASSUMPTIONS], "policy": policy}

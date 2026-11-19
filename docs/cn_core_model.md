@@ -1,81 +1,83 @@
-# CN Core replica: tables, data and what is assumed
+# The sandbox book: tables, data, and how it maps to D1 to D13
 
-The platform audits against tables modelled on **CN_CORE** and **UAMDB** (from the supplied DDL exports and the telecalling
-data model), loaded with synthetic but realistic collections data. Everything is created by `db/migrations/V005__cn_core_replica.sql`
-and filled by `python scripts/gen_cn_core.py` (seeded; re-running replaces the data).
+Every team works on the same synthetic **CN book**: delinquent loan accounts across three fictional lenders (a bank, an NBFC and an MFI) with
+12 months of history (November 2025 to October 2026). The tables keep **CN Core's names** (from the supplied CN_CORE and UAMDB DDL); the
+`book` schema gives the sandbox's own field names for D1 to D13 as views, so nothing is renamed.
 
-## Real structure (mirrors the supplied CN_CORE / UAMDB DDL)
+Built by `db/migrations/V005` and `V009` (structure) and `python scripts/gen_book.py` (data). All data is synthetic.
 
-Real table and column names, lower-cased; only the columns the audit needs. Oracle `NUMBER` is `bigint`/`numeric`, `VARCHAR2` is `text`,
-`DATE`/`TIMESTAMP` is `date`/`timestamp`.
+## Volumes: proposed versus loaded
 
-| Schema.table | Rows | What it holds |
-|---|---|---|
-| `uamdb.organization_type`, `organization`, `roles`, `users`, `user_role_link` | 3 / 7 / 5 / 136 / 136 | The lender, 4 tele-calling agencies and 2 field agencies; their users. `users.employee_code` is the collector id the certification register uses |
-| `cn_core.customer`, `customer_contact_number` | 1,500 / 2,088 | Borrowers and their mobile numbers (primary and alternate) |
-| `cn_core.account`, `account_customer_contact_number` | 1,800 / 2,512 | Loan accounts. `account_number` is what an auditor writes; `id` is the CN account id |
-| `cn_core.collection_case` | 1,800 | One case per account with the allocated tele-call user and agency |
-| `cn_core.disposition_group`, `disposition_code` | 3 / 5 | Disposition masters |
-| `cn_core.tele_campaign`, `tele_process_type`, `tele_process_instance`, `tele_process_instance_user_link` | 4 / 8 / 80 / 120 | Calling campaigns (manual and campaign modes), monthly runs and the agents on them |
-| `cn_core.tele_process_instance_call_logs` | 22,640 | One row per **call-status event**. A session has several rows (for example CONNECTED then DISPOSED) |
-| `cn_core.tele_process_instance_activity` | 13,660 | Bridge: call session to account, customer and the activity it produced |
-| `cn_core.activity_log` | 6,365 | The business outcome of each connected call (disposition, PTP) |
-| `cn_core.communication_dashboard_t`, `digital_template` | 5,365 / 5 | The message log (WhatsApp, SMS) with recipient number; templates and their category |
-| `cn_core.notice_document` | 1,146 | Notice documents |
+`gen_book.py --scale 1.0` produces the proposed volumes; the default `--scale 0.1` keeps every ratio at one tenth and is what is loaded
+(about 290 MB, which is why: full scale would be about 2.9 GB and needs a database sized for roughly 6 million rows).
 
-## Added for the audit (not in the supplied DDL)
+| Dataset | Proposed (scale 1.0) | Loaded (scale 0.1) | Table(s), CN Core names | `book` view |
+|---|---|---|---|---|
+| D1 Account master | 100,000 accounts | 10,000 | `cn_core.account` (+ city, restructure/settlement/legal flags) | `book.d1_account_master` |
+| D2 Borrower master | 85,000 | 8,500 | `cn_core.customer`, `customer_contact_number` (+ source, captured date), `customer_email`, `customer_address`, `customer_name_variant` | `book.d2_borrower_master` |
+| D3 Repayment history | 1.2M rows | 120,000 | `cn_core.account_payment_schedule` (+ amount paid, paid date, mode, bounce reason) | `book.d3_repayment_history` |
+| D4 Contact history | 3M attempts | about 266,000 | `cn_core.tele_process_instance_call_logs` (+ the activity bridge) and `cn_core.communication_dashboard_t` | `book.d4_contact_history` |
+| D5 Call transcripts | 60,000 calls | about 5,700 calls (29,000 turns) | `compliance.call_transcript_segment` (+ language, ASR confidence, offsets) | `book.d5_call_transcripts` |
+| D6 PTP ledger | 150,000 | 27,480 | `cn_core.ptp_ledger` | `book.d6_ptp_ledger` |
+| D7 Payment feed | 400,000 | 40,000 | `cn_core.payment_feed` | `book.d7_payment_feed` |
+| D8 AA bank statements | 20,000 borrowers x 12 months | 1,700 borrowers (192,000 rows) | `cn_core.aa_bank_statement` | `book.d8_bank_statements` |
+| D9 Bureau snapshot | 85,000 borrowers, monthly | 8,500 x 12 (102,000) | `cn_core.bureau_snapshot`, `bureau_tradeline` | `book.d9_bureau_snapshot` |
+| D10 Consent and DND | 85,000 | 8,500 x 4 channels (34,000) | `compliance.consent_dnd_registry` (borrower level) over `compliance.customer_consent` (events) | `book.d10_consent_dnd` |
+| D11 Template registry | 400 | 400 | `cn_core.digital_template` (+ language, approval status) | `book.d11_template_registry` |
+| D12 Policy library | about 200 documents | 200 | `audit.kb_document` / `kb_clause` (the Knowledge base) and `compliance.calling_policy_rule` (structured, per lender) | `book.d12_policy_library` |
+| D13 Channel cost and capacity | per channel and agency | 76 rows | `cn_core.channel_cost_capacity` | `book.d13_channel_cost` |
 
-Marked `-- ext` in the migration: `dialer_code` on the process type, instance, call logs and the bridge (SlashRTC or CognifAI);
-`template_id` on the message log.
+Not in the sandbox list but needed for CO-04: notices (`compliance.notice`), the holiday calendar, the collector roster (`uamdb.users`,
+`organization`, `roles`) and the certification register (`compliance.collector_certification`, keyed by employee code).
 
-## Not in CN Core as supplied: the `compliance` schema (our design, same style)
+## The three lenders
 
-The supplied DDL has no consent, certification, policy-rule, holiday, recording or transcript tables. The audit needs them, so they live in
-`compliance`. **If CN Core holds these elsewhere, map them in `db/staging/R__1*.sql` and nothing else changes.**
+| Lender (`institution_code`) | Type | Products | Calling hours (D12) | Daily attempts per contact number |
+|---|---|---|---|---|
+| Sahyadri Bank (`BANK01`) | Bank | Personal loan, business loan, credit card | 08:00 to 19:00; to **18:50 from 1 Apr 2026** | **4**; **5 from 1 Jun 2026** |
+| Kaveri Finserv (`NBFC01`) | NBFC | Two-wheeler, consumer durable, business loan | 08:00 to 19:00 | 3 |
+| Ganga Microfinance (`MFI01`) | MFI | Group and individual micro-loans | 09:00 to 18:00 | 2 |
 
-| Table | Rows | Purpose |
-|---|---|---|
-| `compliance.dialer_config` | 2 | Each dialer's name and the time zone of its call timestamps (SlashRTC IST, CognifAI UTC) |
-| `compliance.call_session_xref` | 305 | Authoritative cross-reference for a call mirrored in both dialers, naming the canonical one |
-| `compliance.calling_policy_rule` | 7 | **D12**, effective-dated: calling window start and end, daily attempts per contact number, notice dispatch and service limits |
-| `compliance.holiday_calendar` | 14 | National and state holidays |
-| `compliance.customer_consent` | 3,498 | Consent history per recipient number, channel and purpose (grant and revoke events) |
-| `compliance.collector_certification` | 117 | Certificates keyed by employee code, with validity dates |
-| `compliance.call_recording` | 6,365 | Recording store status per session: AVAILABLE, NOT_FOUND or RETRIEVAL_FAILED |
-| `compliance.call_transcript_segment` | 19,991 | Transcript with tags and offsets into the recording (identity check, dues disclosure) |
-| `compliance.notice` | 1,191 | Notice trigger, dispatch and service dates |
+Notice limits are the same for all lenders (dispatch within 3 business days, service within 7). The 200 policy documents include each lender's
+calling-hours and contact-frequency policies (with their dated versions) stating exactly these numbers, plus regulator circulars with the outer limits.
 
-## How the platform reads it
+## Real CN Core structure versus what we added
 
-`db/staging/R__1*.sql` builds typed views over these tables (UTC timestamps, original value and zone kept): `accounts`, `call_sessions`
-(one row per dialer-qualified session, with `statuses`, `connected`, `counts_as_attempt`, `is_mirror_duplicate`), `messages`, `consents`,
-`recordings`, `transcript_segments`, `policy_rules`, `holidays`, `notices`, `collectors`, `certifications`, `dialers`. The agent's tools read
-only these views through the read-only role.
+Real tables and columns (from the supplied DDL): `uamdb.*`, `cn_core.customer`, `account`, `collection_case`, `customer_contact_number`,
+`account_customer_contact_number`, `customer_address`, `customer_email`, `branch`, `institution`, `lender`, `account_payment_schedule`,
+`tele_process_type`, `tele_process_instance`, `tele_process_instance_call_logs`, `tele_process_instance_activity`, `activity_log`,
+`communication_dashboard_t`, `digital_template`, `notice_document`. Columns marked `-- ext` in the migrations are additions (for example
+`dialer_code`, the paid columns on the payment schedule). Wholly new tables: `ptp_ledger`, `payment_feed`, `aa_bank_statement`,
+`bureau_snapshot`, `bureau_tradeline`, `channel_cost_capacity`, `customer_name_variant`, and the whole `compliance` schema (the supplied DDL has none of it).
 
-Joins worth knowing: a call session is `(dialer_code, call_session_id)`; the collector is `call_user_id` → `users.user_id` →
-`users.employee_code` → certification register; a message's purpose is `communication_dashboard_t.template_id` → `digital_template.sms_category`;
-consent is matched on the recipient **number** and channel, not the account.
+## Two dialers, on purpose
 
-## Seeded problems (and why they are there)
+SlashRTC logs call times in IST with session ids like `SRTC-20260312-0001234`; CognifAI logs in UTC with `cgn-<uuid>`. A session is identified by
+dialer plus session id, has several status rows (for example CONNECTED then DISPOSED) and counts once. About 2% of calls appear in both dialers;
+`compliance.call_session_xref` names the one that counts.
 
-Late consent (some by hours, a time-zone trap), consent withdrawn later, wrong-purpose consent (a collections consent does not cover a promotional
-message), no consent at all; calls after the window closes (18:51 to 18:59 is a gap only from 1 April, when the window end moved from 19:00 to 18:50);
-a contact number called over the cap (4 until 31 May, 5 from 1 June), exactly at the cap (fine) and mirrored duplicates that would push a naive count over
-the cap; disclosure before identity verification, no verification, failed verification, unclear transcript; recordings NOT_FOUND (a gap) or
-RETRIEVAL_FAILED (cannot determine); notices dispatched or served late, never dispatched, never served; expired, lapsed and missing certificates, and
-collectors with no employee code (cannot determine). The request lists loan account numbers, including 3 that match nothing and some that match two
-loans (the same number under two institutions).
+## Seeded problems
+
+Late, withdrawn, wrong-purpose and missing consent (some late by only hours, a time-zone trap); calls after the lender's window closes (a call at
+18:55 is a gap for the bank from 1 April and fine before); a contact number called over the lender's cap, exactly at the cap (fine), and mirrored
+duplicates that would push a naive count over it; disclosure before identity verification, no verification, failed verification, unclear transcript;
+recordings NOT_FOUND (a gap) or RETRIEVAL_FAILED (cannot determine); notices dispatched or served late, never dispatched, never served; expired,
+lapsed and missing certificates; collectors with no employee code. Transcripts exist for about 12% of accounts (the proposal's 60,000 of roughly
+600,000 connected calls), so most other connected calls are honestly "cannot determine" for identity verification. The audit request samples accounts
+that have transcripts, lists loan account numbers, and includes 3 that match nothing and some that match two loans.
 
 ## Ground truth
 
-`gen_cn_core.py` computes the true gaps with its own independent implementation of the rules, over the generated rows, not through the platform:
-`eval/gap_keys/CN-01.csv` (gaps) and `CN-01_cannot_determine.csv`. Score a run: `python -m eval.score --run <id> --gap-key eval/gap_keys/CN-01.csv`.
-Request: `eval/requests/CN-01.txt`. Current result on this data: 322 of 322 true gaps found, no false gaps, no unsupported claims.
+`gen_book.py` computes the true gaps with its own implementation of the rules over the generated rows, not through the platform:
+`eval/gap_keys/CN-01.csv` (gaps) and `CN-01_cannot_determine.csv`. Score: `python -m eval.score --run <id> --gap-key eval/gap_keys/CN-01.csv`.
+Request: `eval/requests/CN-01.txt`. Current result: **427 of 427 true gaps found, no false gaps, no unsupported claims**.
 
 ## Regenerating
 
 ```bash
-python scripts/migrate.py            # V005 creates the tables
-python scripts/migrate.py --staging  # views
-python scripts/gen_cn_core.py        # data (truncates and reloads the CN Core replica tables)
+python scripts/migrate.py            # structure (V005, V009, V010)
+python scripts/migrate.py --staging  # views over the tables
+ALLOW_RELOAD=1 python scripts/gen_book.py --scale 0.1   # replaces the book and clears earlier audit runs
 ```
+It refuses to run on a shared database without `ALLOW_RELOAD=1`. The knowledge base documents added by the generator carry the name `book-seed`;
+a reload replaces those and leaves documents people added.

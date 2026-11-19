@@ -75,3 +75,12 @@ def test_periods_are_understood():
     assert parse_sample("during March 2026", today)["period"]["end"] == "2026-04-01"
     assert parse_sample("covering January to October 2026", today)["period"]["end"] == "2026-11-01"
     assert parse_sample("no dates here", today)["period"] is None
+
+
+def test_month_year_to_month_year_period():
+    from datetime import date
+
+    from agent.parser.request_parser import parse_sample
+
+    p = parse_sample("covering November 2025 to October 2026", date(2026, 11, 19))["period"]
+    assert (p["start"], p["end"]) == ("2025-11-01", "2026-11-01")

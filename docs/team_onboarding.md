@@ -38,7 +38,7 @@ message needs a `communication_dashboard_t` row and, for the consent check, a `c
 
 ## Do not run against the shared database
 
-- `scripts/gen_cn_core.py` and `scripts/load_data.py` replace everyone's data. They refuse to run on a shared database unless `ALLOW_RELOAD=1` is set, and
+- `scripts/gen_book.py` and `scripts/load_data.py` replace everyone's data. They refuse to run on a shared database unless `ALLOW_RELOAD=1` is set, and
   `audit_team` could not truncate anyway. Run them only against your own local Postgres.
 - `scripts/migrate.py --reset` drops the schemas.
 - Never edit a migration file that already exists. A change to the structure is a new file `V0NN__name.sql`; the owner applies it.

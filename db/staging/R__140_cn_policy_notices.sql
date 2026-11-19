@@ -1,7 +1,7 @@
 -- D12 rules (effective-dated), holidays, notices, collectors and certificates.
 CREATE OR REPLACE VIEW staging.policy_rules AS
 SELECT p.rule_id::text AS rule_id, p.policy_code, p.rule_key, p.rule_value, p.unit, p.counting_unit, p.counting_rule,
-       p.effective_from, p.effective_to, p.note
+       p.effective_from, p.effective_to, p.note, p.institution_code
 FROM compliance.calling_policy_rule p;
 
 CREATE OR REPLACE VIEW staging.holidays AS

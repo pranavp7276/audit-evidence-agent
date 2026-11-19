@@ -8,7 +8,7 @@ from agent.tools import get_calls
 from agent.tools.policy import rule_at, rule_int_at, rule_time_at
 
 _CALL = ("dialer_code", "contact_no", "direction", "process_mode", "statuses", "started_ts_src", "started_ts_src_tz")
-_RULE = ("rule_key", "rule_value", "unit", "counting_unit", "counting_rule", "effective_from", "effective_to")
+_RULE = ("rule_key", "institution_code", "rule_value", "unit", "counting_unit", "counting_rule", "effective_from", "effective_to")
 
 
 class CallingHoursCheck(BaseCheck):
@@ -26,9 +26,10 @@ class CallingHoursCheck(BaseCheck):
         for s in get_calls(account_id, *self.window, attempts_only=True):
             local = s["started_ts_utc"].astimezone(RULE_TZ)
             day = local.date()
-            lo, hi = rule_time_at("calling_window_start", day), rule_time_at("calling_window_end", day)
+            lender = s["institution_code"]
+            lo, hi = rule_time_at("calling_window_start", day, lender), rule_time_at("calling_window_end", day, lender)
             inside = lo <= local.time().replace(tzinfo=None) < hi
-            rules = [cite(rule_at("calling_window_start", day), _RULE, "supporting"), cite(rule_at("calling_window_end", day), _RULE, "supporting")]
+            rules = [cite(rule_at("calling_window_start", day, lender), _RULE, "supporting"), cite(rule_at("calling_window_end", day, lender), _RULE, "supporting")]
             evt = (s["session_key"],
                    f"Call {s['session_key']} started {local:%Y-%m-%d %H:%M:%S} IST (logged {s['started_ts_src']} {s['started_ts_src_tz']}), "
                    f"{'inside' if inside else 'outside'} the permitted {lo:%H:%M}-{hi:%H:%M} on that date.", [cite(s, _CALL), *rules])
@@ -56,8 +57,9 @@ class CallingFrequencyCheck(BaseCheck):
                 duplicates[(s["contact_no"], s["started_ts_utc"].astimezone(RULE_TZ).date())] += 1
         gaps, oks = [], []
         for (contact, day), calls in sorted(by_day.items(), key=lambda kv: (kv[0][1], kv[0][0])):
-            cap = rule_int_at("max_attempts_per_contact_per_day", day)
-            rule = cite(rule_at("max_attempts_per_contact_per_day", day), _RULE, "supporting")
+            lender = calls[0]["institution_code"]
+            cap = rule_int_at("max_attempts_per_contact_per_day", day, lender)
+            rule = cite(rule_at("max_attempts_per_contact_per_day", day, lender), _RULE, "supporting")
             n, dup = len(calls), duplicates.get((contact, day), 0)
             note = f" ({dup} mirrored duplicate(s) counted once)" if dup else ""
             if n > cap:
