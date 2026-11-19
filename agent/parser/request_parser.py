@@ -44,12 +44,23 @@ _SOURCES: dict[CheckType, list[SourceSystem]] = {
 
 
 def read_request(path: str | Path, request_id: str) -> Request:
-    """Read a PDF or text/email file into a Request (text only; severity scale parsed later)."""
+    """Read a PDF, email (.eml) or text file into a Request (text only; severity scale parsed later)."""
     path = Path(path)
-    if path.suffix.lower() == ".pdf":
-        raise NotImplementedError("TODO(owner): PDF text extraction")
-    source = "email" if path.suffix.lower() in (".eml", ".msg") else "text"
-    return Request(request_id=request_id, source=source, path=str(path), text=path.read_text(encoding="utf-8"))
+    suffix = path.suffix.lower()
+    if suffix == ".pdf":
+        from pypdf import PdfReader
+
+        text = "\n".join(page.extract_text() or "" for page in PdfReader(str(path)).pages)
+        return Request(request_id=request_id, source="pdf", path=str(path), text=text)
+    if suffix == ".eml":
+        from email import policy
+        from email.parser import BytesParser
+
+        msg = BytesParser(policy=policy.default).parsebytes(path.read_bytes())
+        body = msg.get_body(preferencelist=("plain", "html"))
+        text = f"Subject: {msg['subject'] or ''}\n\n" + (body.get_content() if body else "")
+        return Request(request_id=request_id, source="email", path=str(path), text=text)
+    return Request(request_id=request_id, source="text", path=str(path), text=path.read_text(encoding="utf-8"))
 
 
 def extract_sample_accounts(text: str) -> list[str]:

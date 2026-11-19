@@ -24,4 +24,15 @@ TOOLS = {
     "certification_register": get_certifications,
 }
 
-__all__ = ["TOOLS"]
+
+
+def clear_caches() -> None:
+    """Forget cached per-account lookups so a new run sees the current database."""
+    from agent.tools import certification_register, consent_registry, contact_log, dispatch_tracker, policy, recording_store
+    for fn in (contact_log._all_contacts, consent_registry._consents, recording_store._recordings,
+               certification_register._certs, certification_register._roster, dispatch_tracker.get_holidays,
+               policy.get_policy):
+        fn.cache_clear()
+
+
+__all__ = ["TOOLS", "clear_caches"]

@@ -18,6 +18,20 @@ make setup           # starts Postgres, applies migrations, loads raw, builds st
 make test
 ```
 
+## The platform (web app)
+```bash
+python -m agent serve                    # http://127.0.0.1:8000
+python -m agent serve --host 0.0.0.0     # let coworkers on your network connect
+APP_PASSWORD=choose-one python -m agent serve --host 0.0.0.0   # require a password (any user name)
+```
+Upload or paste an audit request (PDF, `.eml` or text), and the agent splits it into checks, tests the
+evidence for each sampled account and records cited findings. In the browser you get, per run: an overview
+by check and severity, every finding with its cited source records (and the raw record itself), the gap
+report graded on the request's severity scale (CSV download), an editable draft response letter, the evidence
+pack (zip), and scoring against a gap key. Everyone who points `DATABASE_URL` at the same Postgres sees the
+same runs. `ANTHROPIC_API_KEY` switches the request parser from the keyword fallback to Claude
+(docs/decisions.md D-012). Synthetic data: `python scripts/gen_synthetic_data.py`, then `make load`.
+
 ## How it fits together
 ```
 request (PDF/email)

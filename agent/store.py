@@ -28,6 +28,12 @@ def start_run(request: Request) -> UUID:
         return row["run_id"]
 
 
+def set_severity_scale(run_id: UUID, scale: list[str]) -> None:
+    """Record the request's severity scale once the parser has read it."""
+    with connect() as conn:
+        conn.execute("UPDATE audit.runs SET severity_scale = %s WHERE run_id = %s", (Jsonb(scale), run_id))
+
+
 def save_checks(run_id: UUID, checks: list[CheckSpec], samples: dict[str, list[str]]) -> None:
     """Persist parsed checks and the accounts sampled for each."""
     with connect() as conn, conn.transaction():
@@ -86,4 +92,4 @@ def finish_run(run_id: UUID, status: str = "completed", notes: str | None = None
         )
 
 
-__all__ = ["start_run", "save_checks", "save_findings", "finish_run"]
+__all__ = ["start_run", "set_severity_scale", "save_checks", "save_findings", "finish_run"]
