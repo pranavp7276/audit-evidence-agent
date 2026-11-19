@@ -47,8 +47,9 @@ The data is a CN Core replica (docs/cn_core_model.md). The auditor's workflow, s
 9. **Rules & data:** the D12 limits in force, what each check tests, the assumptions, and the data read.
 
 Findings are never edited. Reviews, management comments and letter versions are append-only tables
-(`db/migrations/V003__auditor_workflow.sql`). `ANTHROPIC_API_KEY` switches the request reader from the keyword
-fallback to Claude (docs/decisions.md D-012). Synthetic data: `python scripts/gen_synthetic_data.py`, then `make load`.
+(`db/migrations/V003__auditor_workflow.sql`). `SARVAM_API_KEY` (in `.env`) turns on the models: the decision model reads each question, the reasoning
+model handles bundled questions and plain instructions, and a chat model powers the help assistant in the Guide (docs/decisions.md D-020).
+Without a key the keyword reader is used. Synthetic data: `python scripts/gen_synthetic_data.py`, then `make load`.
 
 ## How it fits together
 ```

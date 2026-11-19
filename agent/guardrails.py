@@ -5,13 +5,14 @@ A circular, policy or SOP is split into numbered clauses. Each independently tes
 are versioned (audit.guardrail): a run records the version it applied. The weight only orders the review queue; it never
 changes whether the evidence shows a gap.
 
-Suggesting guardrails from a clause is keyword-based here (no model call): it proposes, Compliance reviews and publishes.
+Suggesting guardrails from a clause starts with keyword rules, confirmed by the decision model when available: it proposes, Compliance reviews and publishes.
 """
 from __future__ import annotations
 
 import re
 from datetime import date
 
+from agent import llm
 from agent.db import read_rows
 
 SEVERITY_DEFAULT = {"consent_before_contact": "Critical", "calling_hours": "Critical", "calling_frequency": "Critical",
@@ -92,14 +93,66 @@ def extract_parameters(check_type: str, text: str) -> dict:
     return {}
 
 
+_CONTROL_TEXT = {
+    "consent_before_contact": "Borrower consent required before WhatsApp or SMS messages",
+    "calling_hours": "Permitted calling hours or time of day for calls",
+    "calling_frequency": "Limit on the number of calls or attempts per day or period",
+    "verification_before_disclosure": "Verify the borrower's identity before disclosing dues or loan details",
+    "notice_timeline": "Timelines for dispatching or serving notices",
+    "agent_certification": "Recovery agents must be certified, authorised or trained",
+    "recording_completeness": "Calls must be recorded and recordings retained",
+    "none": "The clause does not state a testable obligation of these kinds",
+}
+
+
+def _decide(clause: str) -> tuple[str, float] | None:
+    """The decision model's reading of one clause: the control it states (or none) and its confidence. None if unavailable."""
+    if not llm.available():
+        return None
+    try:
+        pick = llm.decide(clause, {"control": {"type": "choice", "instructions": "Which control does this policy clause state?",
+                                               "criteria": _CONTROL_TEXT}})["control"]
+        return pick["choice"], float(pick.get("confidence", 0))
+    except (llm.LLMError, KeyError, TypeError, ValueError):
+        return None
+
+
+def _limits_with_model(check_type: str, clause: str) -> dict:
+    """When the keyword rules find no numbers in a clause that should have them, ask the reasoning model to read them."""
+    if not llm.available():
+        return {}
+    try:
+        data = llm.reason_json(
+            f"Read this policy clause about '{TITLES[check_type]}' and extract the numeric limits it states. Reply ONLY with a flat JSON object "
+            "using short snake_case keys, such as {\"window_start\": \"08:00\", \"window_end\": \"19:00\"} (24-hour times), {\"max_per_day\": 5}, "
+            "{\"days\": 7, \"day_type\": \"working\"} or {\"retention\": \"12 months\"}. Reply {} if it states no limit. Do not invent values.\n\nClause: " + clause,
+            max_tokens=300)
+        return {k: v for k, v in data.items() if isinstance(v, (str, int, float))} if isinstance(data, dict) else {}
+    except llm.LLMError:
+        return {}
+
+
 def suggest(clauses: list[tuple[str, str]]) -> list[dict]:
-    """Draft guardrails: one per clause per control the clause appears to state. Nothing is published."""
+    """Draft guardrails: one per clause per control the clause appears to state. Keyword rules propose; when models are available the
+    decision model confirms (and can veto a keyword match it is sure is wrong, or add one the keywords missed), and the reasoning model
+    reads limits the keywords could not. Nothing is published."""
     drafts = []
     for no, body in clauses:
-        for check_type, patterns in _TOPICS:
-            if any(re.search(p, body, re.IGNORECASE) for p in patterns):
-                drafts.append({"check_type": check_type, "title": TITLES[check_type], "obligation": body[:600], "source_clause": no,
-                               "parameters": extract_parameters(check_type, body), "default_severity": SEVERITY_DEFAULT[check_type]})
+        types = [ct for ct, patterns in _TOPICS if any(re.search(p, body, re.IGNORECASE) for p in patterns)]
+        verdict = _decide(body)
+        source = "keywords"
+        if verdict:
+            choice, conf = verdict
+            if choice == "none" and conf >= 0.85:
+                types = []
+            elif choice in TITLES and conf >= 0.6 and choice not in types:
+                types.append(choice)
+            source = f"keywords + {llm.models()['decision']}"
+        for check_type in types:
+            params = extract_parameters(check_type, body) or (_limits_with_model(check_type, body) if check_type in (
+                "calling_hours", "calling_frequency", "notice_timeline", "recording_completeness") else {})
+            drafts.append({"check_type": check_type, "title": TITLES[check_type], "obligation": body[:600], "source_clause": no,
+                           "parameters": params, "default_severity": SEVERITY_DEFAULT[check_type], "suggested_by": source})
     return drafts
 
 

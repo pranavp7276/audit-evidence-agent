@@ -31,14 +31,15 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
+from pydantic import BaseModel
 
-from agent import store
+from agent import llm, store
 from agent.contracts import CheckSpec, CheckType
 from agent.contracts import Request as AuditRequest
 from agent.db import connect, database_url, read_rows
 from agent.guardrails import SEVERITY_DEFAULT, split_clauses, suggest
 from agent.pack.writer import DISPOSITIONS, build_pack, generate_letter
-from agent.parser.request_parser import _SOURCES, parse_checks, parse_sample, read_request
+from agent.parser.request_parser import _SOURCES, parse_checks_with_info, parse_sample, read_request
 from agent.pipeline import MAX_SAMPLE, contacted_accounts, process, resolve_references
 from agent.tools.warehouse_sql import run_sql
 from agent.web.rules import ASSUMPTIONS, CHECK_INFO, SOURCES, STATUS_MEANING
@@ -130,10 +131,33 @@ def _completed(run_id: UUID) -> dict:
 
 @app.get("/api/config")
 def config() -> dict:
-    llm = bool(os.environ.get("ANTHROPIC_API_KEY"))
-    return {"parser": "llm" if llm else "keyword", "model": os.environ.get("AGENT_MODEL") if llm else None,
+    on = llm.available()
+    return {"parser": "llm" if on else "keyword", "models": llm.models() if on else None,
             "password_protected": bool(os.environ.get("APP_PASSWORD")), "sla_minutes": 120,
             "check_types": {k: v["title"] for k, v in CHECK_INFO.items()}}
+
+
+class _Ask(BaseModel):
+    question: str
+    context: str = ""
+
+
+@app.post("/api/assist")
+def assist(body: _Ask) -> dict:
+    """The help assistant (conversational model), answering only from the guide text the page sends. It never sees audit data."""
+    q = body.question.strip()
+    if not q:
+        raise HTTPException(400, "Ask a question first.")
+    if not llm.available():
+        raise HTTPException(503, "The assistant needs a model key (SARVAM_API_KEY). The Guide pages cover the same ground.")
+    system = ("You are the help assistant inside an audit evidence platform for collections compliance. Answer ONLY from the guide text below, "
+              "in plain, short steps for a compliance reviewer, auditor or team member. If the guide does not cover it, say so and point to the "
+              "most relevant guide topic. Never invent features, numbers or data, and never answer questions about specific borrowers or accounts.\n\n"
+              "GUIDE:\n" + body.context[:9000])
+    try:
+        return {"answer": llm.chat([{"role": "system", "content": system}, {"role": "user", "content": q[:1000]}]), "model": llm.models()["chat"]}
+    except llm.LLMError as exc:
+        raise HTTPException(502, str(exc))
 
 
 @app.get("/api/rules")
@@ -201,7 +225,7 @@ async def preview(request_id: str = Form("PREVIEW"), text: str = Form(""), sourc
     """Read the request and show how it would be tested, without running anything."""
     request = await _request_from_form(request_id.strip() or "PREVIEW", text, source, file)
     try:
-        checks, scale = parse_checks(request)
+        checks, scale, info = parse_checks_with_info(request)
     except Exception as exc:
         raise HTTPException(400, f"Could not interpret the request: {exc}")
     stated = parse_sample(request.text)
@@ -210,12 +234,13 @@ async def preview(request_id: str = Form("PREVIEW"), text: str = Form(""), sourc
     unmatched = [r["ref"] for r in refs if r["status"] == "unmatched"]
     ambiguous = [{"ref": r["ref"], "note": r["note"]} for r in refs if r["status"] == "ambiguous"]
     rows = [{"check_id": c.check_id, "question_ref": c.question_ref, "question_text": c.question_text,
-             "check_type": c.check_type.value, "severity": c.test.get("severity"), "sources": [s.value for s in c.sources]}
+             "check_type": c.check_type.value, "severity": c.test.get("severity"), "sources": [s.value for s in c.sources],
+             "reader": c.test.get("reader"), "confidence": c.test.get("confidence")}
             for c in checks]
     period = stated["period"]
     return {"source": request.source, "text": request.text, "checks": rows, "scale": scale, "accounts": len(accounts),
             "matched": sum(r["status"] == "matched" for r in refs), "unmatched": unmatched[:100], "ambiguous": ambiguous[:100],
-            "parser": "llm" if os.environ.get("ANTHROPIC_API_KEY") else "keyword",
+            "parser": info["reader"], "models": info["models"], "parser_note": info["note"],
             "instruction": not re.search(r"^\s*Q\d+\s*[.:)]", request.text, re.MULTILINE),
             "period": period, "size": stated["size"], "eligible": contacted_accounts(period), "max_sample": MAX_SAMPLE}
 
@@ -245,7 +270,8 @@ async def create_run(request_id: str = Form(...), text: str = Form(""), source: 
         try:
             specs = [CheckSpec(check_id=c["check_id"], question_ref=c["question_ref"], question_text=c["question_text"],
                                check_type=CheckType(c["check_type"]), sample={}, sources=_SOURCES[CheckType(c["check_type"])],
-                               test={"severity": c["severity"]} if c.get("severity") else {}) for c in json.loads(checks)]
+                               test={**({"severity": c["severity"]} if c.get("severity") else {}),
+                                     **({"reader": c["reader"], "confidence": c.get("confidence")} if c.get("reader") else {})}) for c in json.loads(checks)]
         except Exception as exc:
             raise HTTPException(400, f"The reviewed checks are not valid: {exc}")
     labels = json.loads(scale) if scale.strip() else None

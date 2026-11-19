@@ -5,18 +5,18 @@ that does not validate is rejected, not patched. Compound questions become sever
 sharing a question_ref (Q3 -> Q3a, Q3b). A question that maps to no known check type becomes
 check_type=OTHER so it still appears in the response as unanswered, never silently dropped.
 
-With ANTHROPIC_API_KEY set the questions are interpreted by Claude. Without a key a keyword
-fallback is used (docs/decisions.md D-012) so the pipeline can still run; it only knows the
-seven check types and the "Q<n>." question layout.
+With SARVAM_API_KEY set, each numbered question goes to the decision model (sarvam-prism) to pick its check with a confidence,
+and bundled or unclear questions and plain instructions go to the reasoning model (DeepSeek). Without a key, or if the service fails,
+a keyword fallback is used (docs/decisions.md D-012, D-020); it only knows the seven check types and the "Q<n>." layout.
+The auditor confirms the result before anything runs.
 """
 from __future__ import annotations
 
-import json
-import os
 import re
 from datetime import date, timedelta
 from pathlib import Path
 
+from agent import llm
 from agent.contracts import CheckSpec, CheckType, Request, SourceSystem
 
 _QUESTION = re.compile(r"^\s*(Q\d+)\s*[.:)]\s*(.+?)\s*$", re.MULTILINE)
@@ -183,40 +183,91 @@ def _parse_fallback(request: Request) -> tuple[list[CheckSpec], list[str]]:
     return checks, scale
 
 
-_PROMPT = """You split an audit request into checks. Return ONLY JSON:
-{"severity_scale": [labels most severe first, exactly as written],
- "checks": [{"check_id": "Q3a", "question_ref": "Q3", "question_text": "<exact wording>",
-             "check_type": one of %s,
-             "test": {"severity": "<label that applies to this question, if the request gives one>"},
-             "sources": [subset of %s]}]}
-A compound question becomes several checks (Q3a, Q3b). A question that fits no type gets check_type "other".
-Never drop a question. Do not judge pass or fail; that is done in code.
-If the request is an instruction rather than numbered questions (for example "run a compliance audit of all the guardrails"),
-make one check per guardrail it asks about (all seven check types for a full compliance audit), numbered Q1, Q2, ...
-and use the severity scale Critical, Major, Minor if the request gives none. Ignore the period and the sample size:
-they are read separately.
-
-Request:
-%s"""
+_CONTROLS = {
+    "consent_before_contact": "Borrower consent before WhatsApp or SMS messages are sent",
+    "calling_hours": "Calls placed only within the permitted calling hours",
+    "calling_frequency": "Number of call attempts to a borrower or contact number within the permitted daily or periodic limit",
+    "verification_before_disclosure": "Borrower identity verified before dues or loan details are disclosed on a call",
+    "notice_timeline": "Legal or demand notices dispatched and served within the required timeline",
+    "agent_certification": "Recovery agents or collectors certified, authorised or trained on the date of the call",
+    "recording_completeness": "Call recordings available and retained for calls",
+    "other": "None of the above: the question tests something else",
+}
+LOW_CONFIDENCE = 0.7
 
 
-def _parse_with_llm(request: Request) -> tuple[list[CheckSpec], list[str]]:
-    import anthropic  # imported here so the fallback works without the SDK or a key
+def _decide_type(text: str) -> tuple[CheckType, float, bool]:
+    """The decision model's choice of check for one question, its confidence, and whether the question seems to bundle several tests."""
+    answers = llm.decide(llm.strip_sample(text), {
+        "check_type": {"type": "choice", "instructions": "Which control does this audit question test?", "criteria": _CONTROLS},
+        "bundles": {"type": "noul", "instructions": "Does the question ask for more than one separate test (for example hours and frequency, or calls and certification)?"}})
+    pick = answers["check_type"]
+    return CheckType(pick["choice"]), float(pick.get("confidence", 0)), float(answers["bundles"].get("noul", 0)) > 0.5
 
-    client = anthropic.Anthropic()
-    msg = client.messages.create(
-        model=os.environ.get("AGENT_MODEL", "claude-sonnet-4-6"), max_tokens=8000,
-        messages=[{"role": "user", "content": _PROMPT % (
-            [t.value for t in CheckType], [s.value for s in SourceSystem], request.text)}])
-    raw = "".join(b.text for b in msg.content if b.type == "text")
-    data = json.loads(raw[raw.index("{"): raw.rindex("}") + 1])
-    checks = [CheckSpec(**{**c, "sample": {"source": "request_text"}}) for c in data["checks"]]
-    return checks, list(data.get("severity_scale", []))
+
+def _split_types(question: str) -> list[CheckType]:
+    """The reasoning model lists the separate controls a bundled question asks about."""
+    data = llm.reason_json(
+        "An auditor's question may ask for several separate tests. List every control it asks about, using only these ids: "
+        + ", ".join(k for k in _CONTROLS if k != "other") + '. Reply ONLY with JSON like {"controls": ["calling_hours", "calling_frequency"]}. '
+        "Include a control only if the question actually asks for it.\n\nQuestion: " + llm.strip_sample(question), max_tokens=400)
+    out = [CheckType(c) for c in data.get("controls", []) if c in _CONTROLS and c != "other"]
+    return out or [CheckType.OTHER]
+
+
+def _parse_questions_with_models(request: Request) -> tuple[list[CheckSpec], list[str]]:
+    scale, by_q = _severity_by_question(request.text)
+    checks: list[CheckSpec] = []
+    for ref, question in _QUESTION.findall(request.text):
+        ctype, conf, bundled = _decide_type(question)
+        if ctype is CheckType.OTHER and conf >= LOW_CONFIDENCE:
+            types, reader = [CheckType.OTHER], f"{llm.models()['decision']} ({conf:.0%} sure)"
+        elif bundled or conf < LOW_CONFIDENCE:
+            types, reader = _split_types(question), f"{llm.models()['reasoning']} (question looked bundled or unclear)"
+        else:
+            types, reader = [ctype], f"{llm.models()['decision']} ({conf:.0%} sure)"
+        for i, t in enumerate(types):
+            test = {"severity": by_q[ref]} if by_q.get(ref) else {}
+            test.update(reader=reader, confidence=round(conf, 3))
+            checks.append(CheckSpec(check_id=ref if len(types) == 1 else f"{ref}{chr(97 + i)}", question_ref=ref, question_text=question,
+                                    check_type=t, sample={"source": "request_text"}, test=test, sources=_SOURCES[t]))
+    return checks, scale
+
+
+def _parse_instruction_with_models(request: Request) -> tuple[list[CheckSpec], list[str]]:
+    data = llm.reason_json(
+        "You read an instruction for a collections compliance audit and decide which controls to test. Use only these control ids: "
+        + ", ".join(f"{k} ({v})" for k, v in _CONTROLS.items() if k != "other")
+        + '. If it asks for a full compliance audit or all guardrails, include every control. Otherwise include only those it names or clearly implies. '
+        'Reply ONLY with JSON like {"controls": ["calling_hours"]}.\n\nInstruction: ' + llm.strip_sample(request.text), max_tokens=500)
+    wanted = {c for c in data.get("controls", []) if c in _CONTROLS and c != "other"}
+    if not wanted:
+        raise llm.LLMError("The model chose no controls.")
+    reader = f"{llm.models()['reasoning']}"
+    checks = []
+    for i, (ct, question, severity) in enumerate((s for s in _STANDARD if s[0].value in wanted), 1):
+        checks.append(CheckSpec(check_id=f"Q{i}", question_ref=f"Q{i}", question_text=question, check_type=ct, sample={"source": "request_text"},
+                                test={"severity": severity, "reader": reader}, sources=_SOURCES[ct]))
+    return checks, list(DEFAULT_SCALE)
+
+
+def parse_checks_with_info(request: Request) -> tuple[list[CheckSpec], list[str], dict]:
+    """Return (checks, severity_scale, info). With model access the questions are read by the decision and reasoning
+    models; if the service fails, or there is no key, the keyword reader is used and info says so. The auditor confirms
+    the result before anything runs (docs/decisions.md D-020)."""
+    info = {"reader": "keyword", "models": None, "note": None}
+    if llm.available():
+        try:
+            checks, scale = (_parse_questions_with_models(request) if _QUESTION.search(request.text) else _parse_instruction_with_models(request))
+            if checks:
+                return checks, scale, {"reader": "models", "models": llm.models(), "note": None}
+        except (llm.LLMError, ValueError, KeyError, TypeError) as exc:
+            info["note"] = f"The model service could not read this request ({exc}). The keyword reader was used instead; please check every row."
+    checks, scale = _parse_fallback(request)
+    return checks, scale, info
 
 
 def parse_checks(request: Request) -> tuple[list[CheckSpec], list[str]]:
     """Return (checks, severity_scale)."""
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return _parse_with_llm(request)
-    print("ANTHROPIC_API_KEY is not set: using the keyword fallback parser (docs/decisions.md D-012).")
-    return _parse_fallback(request)
+    checks, scale, _ = parse_checks_with_info(request)
+    return checks, scale
