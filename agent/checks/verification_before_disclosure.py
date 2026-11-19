@@ -20,6 +20,7 @@ class VerificationBeforeDisclosureCheck(BaseCheck):
     A call where dues were never disclosed has nothing to test. Cite the call, the recording status and the segments."""
 
     check_type = "verification_before_disclosure"
+    tools = ('contact_log', 'recording_store', 'transcript_store')  # what the planner schedules and the trace attributes
 
     def evaluate(self, account_id: str) -> list[Finding]:
         calls = [c for c in get_calls(account_id, *self.window, attempts_only=True) if c["connected"]]
@@ -44,16 +45,18 @@ class VerificationBeforeDisclosureCheck(BaseCheck):
             checks = [s for s in segs if s["tag"].startswith("IDENTITY_CHECK")]
             passed = [s for s in checks if s["tag"] == "IDENTITY_CHECK_PASS"]
             call = cite(c, _CALL)
+            mirror = rec.get("via_mirror") or (segs[0].get("via_mirror") if segs else None)
+            note = f" (evidence held by the mirrored session {mirror})" if mirror else ""
             support = [cite(rec, _REC, "supporting"), cite(first_seg, _SEG, "supporting"), *(cite(s, _SEG, "supporting") for s in checks)]
             if any(s["tag"] == "UNCLEAR" for s in segs) and not passed:
                 unknown.append((k, f"Call {k}: the identity step is unclear in the transcript, so verification cannot be confirmed."))
             elif any(float(s["start_offset_sec"]) < first for s in passed):
                 ok = min((s for s in passed if float(s["start_offset_sec"]) < first), key=lambda s: float(s["start_offset_sec"]))
-                oks.append((k, f"Call {k}: identity verified at {float(ok['start_offset_sec']):.0f}s, before dues were disclosed at {first:.0f}s.", [call, *support]))
+                oks.append((k, f"Call {k}: identity verified at {float(ok['start_offset_sec']):.0f}s, before dues were disclosed at {first:.0f}s{note}.", [call, *support]))
             elif any(float(s["start_offset_sec"]) == first for s in passed):
                 unknown.append((k, f"Call {k}: identity verification is at exactly the first disclosure offset; whether that is 'before' is not settled (D-011)."))
             else:
                 why = (f"verified only at {min(float(s['start_offset_sec']) for s in passed):.0f}s, after the disclosure at {first:.0f}s" if passed
                        else "the identity check failed" if checks else "no identity check appears in the call")
-                gaps.append((k, f"Call {k} disclosed dues at {first:.0f}s without prior identity verification: {why}.", [call, *support]))
+                gaps.append((k, f"Call {k} disclosed dues at {first:.0f}s without prior identity verification: {why}{note}.", [call, *support]))
         return self.assemble(account_id, gaps, oks, unknown, "No connected outbound calls in the period to test.")

@@ -20,6 +20,7 @@ class CallingHoursCheck(BaseCheck):
     and system failures are not attempts. Cite the call and the rule rows used."""
 
     check_type = "calling_hours"
+    tools = ('contact_log', 'policy_rules')  # what the planner schedules and the trace attributes
 
     def evaluate(self, account_id: str) -> list[Finding]:
         gaps, oks = [], []
@@ -46,6 +47,7 @@ class CallingFrequencyCheck(BaseCheck):
     cap: the first session past the cap is cited as the primary record, the rest as supporting, with the rule."""
 
     check_type = "calling_frequency"
+    tools = ('contact_log', 'policy_rules')  # what the planner schedules and the trace attributes
 
     def evaluate(self, account_id: str) -> list[Finding]:
         by_day = defaultdict(list)

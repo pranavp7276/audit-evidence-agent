@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from functools import lru_cache
 
+from agent.runtime.tools import tool
 from agent.tools._common import query, with_citation
 
 SENT_STATUSES = ("SENT", "DELIVERED", "READ")
@@ -20,6 +21,7 @@ def _calls(account_id: str) -> tuple[dict, ...]:
     return tuple(with_citation(r, "contact_log", "cn_core.tele_process_instance_call_logs", "session_key", "started_ts") for r in rows)
 
 
+@tool("contact_log", sources=("CN Core call log",))
 def get_calls(account_id: str, start: datetime | None = None, end: datetime | None = None, include_duplicates: bool = False,
               attempts_only: bool = False) -> list[dict]:
     """Call sessions for an account in [start, end), ordered by start time (UTC).
@@ -39,6 +41,7 @@ def _messages(account_id: str) -> tuple[dict, ...]:
     return tuple(with_citation(r, "contact_log", "cn_core.communication_dashboard_t", "message_id", "sent_ts") for r in rows)
 
 
+@tool("message_log", sources=("CN Core message log",))
 def get_messages(account_id: str, start: datetime | None = None, end: datetime | None = None, channel: str | None = None) -> list[dict]:
     """Messages for an account in [start, end): message_id, channel, contact_no (recipient), sent_ts_utc, status,
     template_id and category (the purpose a recipient must have consented to), plus citation fields."""

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from agent.runtime.tools import tool
 from agent.tools._common import query, with_citation
 
 
@@ -18,12 +19,14 @@ def _collector(user_id: str) -> dict | None:
     return with_citation(rows[0], "collector_roster", "uamdb.users", "user_id") if rows else None
 
 
+@tool("certification_register", sources=("Certification register",))
 def get_certifications(employee_code: str) -> list[dict]:
     """Certificates for a collector by employee code. Each row: cert_id, certification, certificate_no, valid_from,
     valid_to (both inclusive dates), plus citation fields."""
     return list(_certs(employee_code))
 
 
+@tool("collector_roster", sources=("Collector roster",))
 def get_collector(user_id: int | str) -> dict | None:
     """The collector's roster row (employee_code, agency, status), or None if the user id is unknown."""
     return _collector(str(user_id))

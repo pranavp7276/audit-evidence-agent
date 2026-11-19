@@ -1,5 +1,5 @@
-"""Plain-language descriptions an auditor can read and defend: what each check tests, which sources it reads,
-how time zones are treated, and the interpretations the platform has assumed (docs/decisions.md)."""
+"""The check catalog: what each check tests in plain language, its sources, the result statuses, the assumptions applied and the data read.
+Written for auditors; also read by the planner and the pack writer."""
 from __future__ import annotations
 
 CHECK_INFO: dict[str, dict] = {

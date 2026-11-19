@@ -38,3 +38,13 @@ Scored on hidden requests: gap recall >= 95%, false gaps < 5%, zero claims witho
 
 ## Commands
 `make setup` (first time), `make test`, `make lint`, `make eval RUN=<id> KEY=<gap key csv>`
+
+## Domain references (from real audit documents; only what applies here)
+- Precedence when sources disagree: audit request (wording, sample, severity scale) > D12 (calling hours and frequency) > guardrail defaults > RBI baseline (calls only 08:00 to 19:00, no persistent calling). Never hard-code the window or daily caps; read them from D12.
+- Normalise all timestamps to Asia/Kolkata before any hour, day or date comparison.
+- Triage each request question first: a per-account check we can test, a vendor document (agency artefacts such as contracts, licences, insurance, CCTV, business continuity plan: never evidenced from our data, listed for the agency to supply), or not testable from any system (dress code, visit location, gifts: always `cannot_determine`, said plainly in the letter).
+- A missing recording makes the transcript-based checks for that call `cannot_determine`, never `evidenced`.
+- Quality-scorecard "fatal" items (recording disclaimer, false information, disposition mismatch, threats) map to the top of the request's severity scale unless the scale says otherwise. Soft-skill scoring (greeting, negotiation, dead air) is not audit compliance.
+- Keep borrower detail in pack outputs to what the request needs: account reference, dates, record ids. No names or full phone numbers unless the request asks.
+- The agent's own loop and roles: docs/workflow.md.
+

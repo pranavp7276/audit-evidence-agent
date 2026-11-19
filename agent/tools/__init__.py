@@ -5,27 +5,18 @@ Tools read only from staging.* (never raw.* or cn_core.* directly, never audit.*
 connection, and return records that already carry what a Citation needs:
 source_system, source_table, record_key, the UTC timestamp and the original timestamp.
 """
+from agent.runtime.tools import REGISTRY as _REGISTRY
 from agent.tools.certification_register import get_certifications, get_collector
 from agent.tools.consent_registry import get_consents
 from agent.tools.contact_log import get_calls, get_messages
 from agent.tools.dispatch_tracker import get_notices
 from agent.tools.policy import rule_at
 from agent.tools.recording_store import get_recordings, get_transcripts
+from agent.tools.session_mirrors import get_mirror_keys
 from agent.tools.template_registry import get_template
 from agent.tools.warehouse_sql import run_sql
 
-TOOLS = {
-    "warehouse_sql": run_sql,
-    "contact_log": get_calls,
-    "message_log": get_messages,
-    "recording_store": get_recordings,
-    "transcript_store": get_transcripts,
-    "consent_registry": get_consents,
-    "template_registry": get_template,
-    "dispatch_tracker": get_notices,
-    "certification_register": get_certifications,
-    "policy_rules": rule_at,
-}
+TOOLS = {name: spec.fn for name, spec in _REGISTRY.items()}  # every @tool, by name; the planner and the model read the same registry
 
 
 def clear_caches() -> None:
@@ -45,4 +36,4 @@ def clear_caches() -> None:
         fn.cache_clear()
 
 
-__all__ = ["TOOLS", "clear_caches", "get_calls", "get_certifications", "get_collector", "get_consents", "get_messages", "get_notices", "get_recordings", "get_template", "get_transcripts", "rule_at", "run_sql"]
+__all__ = ["TOOLS", "clear_caches", "get_calls", "get_certifications", "get_collector", "get_mirror_keys", "get_consents", "get_messages", "get_notices", "get_recordings", "get_template", "get_transcripts", "rule_at", "run_sql"]

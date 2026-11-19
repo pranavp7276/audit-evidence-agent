@@ -33,6 +33,7 @@ class BaseCheck(ABC):
     account. It never returns nothing for an account: if it cannot decide, it says so."""
 
     check_type: str
+    tools: tuple[str, ...] = ()
 
     def __init__(self, spec: CheckSpec, severity_scale: list[str]):
         self.spec = spec

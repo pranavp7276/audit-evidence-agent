@@ -4,10 +4,12 @@ from __future__ import annotations
 from datetime import datetime
 from functools import lru_cache
 
+from agent.runtime.tools import tool
 from agent.tools._common import query, with_citation
 
 
 @lru_cache(maxsize=256)
+@tool("template_registry", sources=("Template registry",))
 def get_template(template_id: int | str, on: datetime | None = None) -> dict | None:
     """A message template: template_id, sms_category (COLLECTIONS, SERVICE or PROMOTIONAL), channel, subject.
     The registry keeps one version per template, so `on` is accepted but not used."""

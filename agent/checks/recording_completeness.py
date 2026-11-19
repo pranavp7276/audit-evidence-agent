@@ -18,6 +18,7 @@ class RecordingCompletenessCheck(BaseCheck):
     Cite the call and the recording status record."""
 
     check_type = "recording_completeness"
+    tools = ('contact_log', 'recording_store')  # what the planner schedules and the trace attributes
 
     def evaluate(self, account_id: str) -> list[Finding]:
         calls = [c for c in get_calls(account_id, *self.window, attempts_only=True) if c["connected"]]
@@ -29,7 +30,9 @@ class RecordingCompletenessCheck(BaseCheck):
             if rec is None:
                 unknown.append((k, f"Connected call {k} has no recording status record, so its recording cannot be confirmed."))
             elif rec["storage_status"] == "AVAILABLE":
-                oks.append((k, f"Connected call {k} has a recording ({rec['duration_sec']} s).", [call, cite(rec, _REC, "supporting")]))
+                via = (f", held by the mirrored session {rec['via_mirror']} (this session's own record shows "
+                       f"{(rec.get('own_status') or 'no recording').lower().replace('_', ' ')})") if rec.get("via_mirror") else ""
+                oks.append((k, f"Connected call {k} has a recording ({rec['duration_sec']} s){via}.", [call, cite(rec, _REC, "supporting")]))
             elif rec["storage_status"] == "NOT_FOUND":
                 gaps.append((k, f"Connected call {k} has no recording: the recording store reports none for this session.", [call, cite(rec, _REC, "supporting")]))
             else:

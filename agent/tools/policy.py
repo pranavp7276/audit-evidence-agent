@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import date, time
 from functools import lru_cache
 
+from agent.runtime.tools import tool
 from agent.tools._common import query, with_citation
 
 
@@ -14,6 +15,7 @@ def get_rules() -> tuple[dict, ...]:
     return tuple(with_citation(r, "D12", "compliance.calling_policy_rule", "rule_id") for r in rows)
 
 
+@tool("policy_rules", sources=("D12 policy rules",))
 def rule_at(rule_key: str, day: date, lender: str | None = None) -> dict:
     """The rule in force on a date for a lender: rule_value, unit, counting_unit and counting_rule, with citation fields.
     A rule written for the lender wins over one that applies to every lender."""

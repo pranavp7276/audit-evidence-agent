@@ -5,6 +5,7 @@ import re
 from typing import Any
 
 from agent.db import connect
+from agent.runtime.tools import tool
 
 _FORBIDDEN = re.compile(
     r"\b(insert|update|delete|merge|drop|alter|create|truncate|grant|revoke|copy|vacuum)\b",
@@ -12,6 +13,7 @@ _FORBIDDEN = re.compile(
 MAX_ROWS = 5000
 
 
+@tool("warehouse_sql", sources=("Warehouse",))
 def run_sql(query: str, params: dict[str, Any] | None = None, max_rows: int = MAX_ROWS) -> dict:
     """Run one read-only SELECT against staging.* and return rows.
 

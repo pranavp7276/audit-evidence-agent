@@ -445,8 +445,10 @@ def main(scale: float, seed: int) -> None:
             mode = rnd.choices(["MANUAL", "CAMPAIGN"], [0.45, 0.55])[0]
             dialer = agency_dialers[oid][mode]
             status = forced or rnd.choices(["CONNECTED", "NO_ANSWER", "BUSY", "SYSTEM_FAILURE"], [0.5, 0.33, 0.12, 0.05])[0]
+            rr = rnd.random()
             return dict(account=a, contact=contact, start=start, status=status, connected=status == "CONNECTED", duration=rnd.randint(40, 900) if status == "CONNECTED" else 0,
-                        direction=direction, org=oid, agent=ag, mode=mode, dialer=dialer, sid=new_sid(dialer, start), mirror=None)
+                        direction=direction, org=oid, agent=ag, mode=mode, dialer=dialer, sid=new_sid(dialer, start), mirror=None,
+                        _stor="AVAILABLE" if rr < 0.94 else "NOT_FOUND" if rr < 0.97 else "RETRIEVAL_FAILED")
 
         sessions, by_acct = [], defaultdict(list)
         for a in accts:
@@ -510,6 +512,10 @@ def main(scale: float, seed: int) -> None:
             for s2 in have[:2]:
                 other = "COGNIFAI" if s2["dialer"] == "SLASHRTC" else "SLASHRTC"
                 mirrors.append(dict(s2, dialer=other, sid=new_sid(other, s2["start"]), mirror=s2))
+        for s in sessions:
+            if s["direction"] == "OUTBOUND" and s["connected"] and s["_stor"] != "AVAILABLE" and not s["mirror"] and rnd.random() < 0.35:
+                other = "COGNIFAI" if s["dialer"] == "SLASHRTC" else "SLASHRTC"
+                mirrors.append(dict(s, dialer=other, sid=new_sid(other, s["start"]), mirror=s, _alt_for=s))
         sessions.sort(key=lambda s: (s["start"], s["sid"]))
 
         # certifications keyed by employee code
@@ -581,10 +587,10 @@ def main(scale: float, seed: int) -> None:
                 xr += 1
                 add("compliance.call_session_xref", xref_id=xr, dialer_code=mirror_of["dialer"], call_session_id=mirror_of["sid"], mirror_dialer_code=dialer, mirror_session_id=sid,
                     relation="MIRROR", canonical_dialer_code=mirror_of["dialer"])
-            if not (s["connected"] and mirror_of is None):
+            is_alt = mirror_of is not None and s["connected"] and s.get("_alt_for") is not None
+            if not ((s["connected"] and mirror_of is None) or is_alt):
                 continue
-            rr = rnd.random()
-            storage = "AVAILABLE" if rr < 0.94 else "NOT_FOUND" if rr < 0.97 else "RETRIEVAL_FAILED"
+            storage = "AVAILABLE" if is_alt else s["_stor"]
             rec += 1
             add("compliance.call_recording", recording_id=rec, dialer_code=dialer, call_session_id=sid,
                 recording_url=f"https://rec.example.test/{dialer.lower()}/{sid}.mp3" if storage != "NOT_FOUND" else None, duration_sec=s["duration"] if storage == "AVAILABLE" else None,
@@ -621,7 +627,10 @@ def main(scale: float, seed: int) -> None:
                     add("compliance.call_transcript_segment", segment_id=seg, dialer_code=dialer, call_session_id=sid, seq=i, start_offset_sec=off, speaker=who, utterance=txt, tag=tag,
                         language=lang if who == "AGENT" or lang != "hi-en" else "hi-en", asr_confidence=round(rnd.uniform(0.55 if tag == "UNCLEAR" else 0.8, 0.99), 3),
                         end_offset_sec=off + rnd.randint(3, 12))
-            s["_storage"], s["_scenario"] = storage, scenario
+            if is_alt:  # the call really was recorded, by the other dialer: the evidence exists, in a different system
+                mirror_of["_eff_storage"], mirror_of["_eff_scenario"] = "AVAILABLE", scenario
+            else:
+                s["_storage"], s["_scenario"] = storage, scenario
 
         # ================================================================ D4 contact history: messages (WhatsApp, SMS, email); consent events
         msgs, mid = [], 0
@@ -839,7 +848,8 @@ def main(scale: float, seed: int) -> None:
         for s in sessions:
             if s["direction"] != "OUTBOUND" or not s["connected"]:
                 continue
-            aid, stor, scen = s["account"]["id"], s["_storage"], s["_scenario"]
+            aid = s["account"]["id"]
+            stor, scen = s.get("_eff_storage", s["_storage"]), s.get("_eff_scenario", s["_scenario"])
             if stor == "NOT_FOUND":
                 gaps.add((aid, "Q7"))
                 cnd.add((aid, "Q4"))

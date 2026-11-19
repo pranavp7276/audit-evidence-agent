@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from agent.runtime.tools import tool
 from agent.tools._common import query, with_citation
 
 
@@ -12,6 +13,7 @@ def _consents(contact_no: str, channel: str) -> tuple[dict, ...]:
     return tuple(with_citation(r, "consent_registry", "compliance.customer_consent", "consent_id", "effective_ts") for r in rows)
 
 
+@tool("consent_registry", sources=("Consent registry",))
 def get_consents(contact_no: str, channel: str) -> list[dict]:
     """The consent history for one recipient number on one channel, oldest first. Each row: consent_id, purpose,
     status (GRANTED or REVOKED), effective_ts_utc / effective_ts_src (UTC), capture_source, plus citation fields."""

@@ -7,12 +7,12 @@ from datetime import UTC, date, datetime, time
 from uuid import UUID
 
 from agent import store
-from agent.checks import REGISTRY
 from agent.checks.base import RULE_TZ
 from agent.contracts import CheckSpec, Request
 from agent.db import read_rows
 from agent.guardrails import published_for
 from agent.parser.request_parser import parse_checks, parse_sample
+from agent.runtime.orchestrator import run_agent
 from agent.tools import clear_caches
 
 MAX_SAMPLE = 2000
@@ -129,15 +129,8 @@ def process(run_id: UUID, request: Request, accounts: list[str] | None = None, r
                 c.test = {**c.test, "guardrail": {"id": g["guardrail_id"], "version": g["version"], "title": g["title"]},
                           "default_severity": g["default_severity"], "priority_weight": g["priority_weight"]}
         store.save_checks(run_id, checks, {c.check_id: sample for c in checks})
-        for spec in checks:
-            check_cls = REGISTRY.get(spec.check_type)
-            if check_cls is None:
-                log(f"  {spec.check_id}: no test for check type '{spec.check_type.value}'; reported as not tested")
-                continue
-            findings = check_cls(spec, scale).run(sample)
-            store.save_findings(run_id, findings)
-            n = {s: sum(f.status.value == s for f in findings) for s in ("evidenced", "gap", "cannot_determine")}
-            log(f"  {spec.check_id} {spec.check_type.value}: {len(sample)} accounts, {n}")
+        unresolved = sum(r["status"] != "matched" for r in resolved) if refs else 0
+        run_agent(run_id, checks, scale, sample, origin, period, unresolved, log)
         store.finish_run(run_id, "completed")
     except Exception as exc:
         store.finish_run(run_id, "failed", notes=f"{type(exc).__name__}: {exc}")

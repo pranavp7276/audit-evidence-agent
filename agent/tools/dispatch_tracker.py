@@ -4,9 +4,11 @@ from __future__ import annotations
 from datetime import date, timedelta
 from functools import lru_cache
 
+from agent.runtime.tools import tool
 from agent.tools._common import query, with_citation
 
 
+@tool("dispatch_tracker", sources=("Notice dispatch history",))
 def get_notices(account_id: str) -> list[dict]:
     """Notices for an account. Each row: notice_id, notice_type, borrower_state, trigger_date, dispatch_date (None if never
     dispatched), served_date (None if never served), plus citation fields. Dates have no zone, so no timestamp."""

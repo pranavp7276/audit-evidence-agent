@@ -19,6 +19,7 @@ class AgentCertificationCheck(BaseCheck):
     Cite the call and the certificate rows (or the roster row if there is no certificate)."""
 
     check_type = "agent_certification"
+    tools = ('contact_log', 'certification_register', 'collector_roster')  # what the planner schedules and the trace attributes
 
     def evaluate(self, account_id: str) -> list[Finding]:
         gaps, oks, unknown = [], [], []

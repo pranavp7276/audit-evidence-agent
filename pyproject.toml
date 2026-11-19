@@ -35,7 +35,9 @@ select = ["E", "F", "I"]
 
 [tool.ruff.lint.per-file-ignores]
 "agent/web/rules.py" = ["E501"]  # plain-language text for auditors
-"agent/web/app.py" = ["E501"]  # long SQL and response builders
+"agent/web/*.py" = ["E501"]  # long SQL and response builders
+"agent/web/routers/*.py" = ["E501"]
+"agent/runtime/*.py" = ["E501"]  # trace sentences and prompts
 "agent/pack/writer.py" = ["E501"]  # letter and pack text
 "agent/parser/request_parser.py" = ["E501"]  # question wording
 "agent/checks/*.py" = ["E501"]  # finding reasons read as sentences

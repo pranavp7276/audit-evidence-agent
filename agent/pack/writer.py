@@ -83,7 +83,7 @@ def _question_groups(d: dict) -> dict[str, list[dict]]:
 
 def generate_letter(run_id: UUID) -> str:
     """A draft response letter from the recorded findings, reviews and management comments."""
-    from agent.web.rules import ASSUMPTIONS, CHECK_INFO
+    from agent.checks.catalog import ASSUMPTIONS, CHECK_INFO
 
     d = collect(run_id)
     run, findings = d["run"], d["findings"]
@@ -158,7 +158,7 @@ def generate_letter(run_id: UUID) -> str:
 
 def build_pack(run_id: UUID) -> str:
     """Write the pack and return its folder."""
-    from agent.web.rules import ASSUMPTIONS, CHECK_INFO, STATUS_MEANING
+    from agent.checks.catalog import ASSUMPTIONS, CHECK_INFO, STATUS_MEANING
 
     d = collect(run_id)
     run, checks, findings, cites = d["run"], d["checks"], d["findings"], d["cites"]
@@ -205,6 +205,15 @@ def build_pack(run_id: UUID) -> str:
             w.writerow([r["created_at"].isoformat(), r["reviewer"], r["finding_id"], r["check_id"], r["account_id"],
                         r["subject_ref"] or "", DISPOSITIONS[r["disposition"]], r["comment"] or ""])
 
+    with connect() as conn:
+        trace = conn.execute("SELECT seq, phase, agent, action, tool, check_id, account_id, status, duration_ms FROM audit.agent_steps WHERE run_id = %s ORDER BY seq",
+                             (run_id,)).fetchall()
+    with (folder / "agent_trace.csv").open("w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["seq", "phase", "agent", "action", "tool", "check_id", "account_id", "status", "duration_ms"])
+        for t in trace:
+            w.writerow([t["seq"], t["phase"], t["agent"], t["action"], t["tool"] or "", t["check_id"] or "", t["account_id"] or "", t["status"], t["duration_ms"] or ""])
+
     lines = [f"# Evidence pack: {run['request_id']}", "", f"Run `{run_id}` ({run['status']}), agent version {run['agent_version']}.", ""]
     if run["lender"]:
         lines += [f"Requested by: {run['lender']}", ""]
@@ -214,7 +223,7 @@ def build_pack(run_id: UUID) -> str:
         lines.append(f"| {chk['check_id']} | {chk['question_ref']} | {chk['check_type']} | {d['sample_n'].get(chk['check_id'], 0)} | "
                      + " | ".join(str(n[s]) for s in _STATUSES) + f" | [csv](extracts/{chk['check_id']}.csv) |")
     lines += ["", f"- Gap report: gap_report.csv ({len(gaps)} gap findings, graded {' > '.join(scale) or 'by severity'})",
-              "- Follow-up list: follow_up.csv", "- Review trail: reviews.csv", "- Response letter: response_letter.md",
+              "- Follow-up list: follow_up.csv", "- Review trail: reviews.csv", f"- What the agent did: agent_trace.csv ({len(trace)} steps)", "- Response letter: response_letter.md",
               "- Rules and assumptions: rules_and_assumptions.md", ""]
     (folder / "index.md").write_text("\n".join(lines), encoding="utf-8")
 

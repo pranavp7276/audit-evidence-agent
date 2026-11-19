@@ -21,6 +21,7 @@ class ConsentBeforeContactCheck(BaseCheck):
     Messages that failed to send are not tested. The two sources are in different zones: compare *_utc only."""
 
     check_type = "consent_before_contact"
+    tools = ('message_log', 'consent_registry')  # what the planner schedules and the trace attributes
 
     def evaluate(self, account_id: str) -> list[Finding]:
         channels = self.spec.test.get("channels", ["WHATSAPP", "SMS"])

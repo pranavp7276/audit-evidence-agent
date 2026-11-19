@@ -22,6 +22,7 @@ class NoticeTimelineCheck(BaseCheck):
     Notices are tested over their own history, not only the audit period (docs/decisions.md D-014)."""
 
     check_type = "notice_timeline"
+    tools = ('dispatch_tracker', 'policy_rules')  # what the planner schedules and the trace attributes
 
     def evaluate(self, account_id: str) -> list[Finding]:
         today = date.today()
